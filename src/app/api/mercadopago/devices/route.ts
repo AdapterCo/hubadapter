@@ -24,7 +24,6 @@ export async function GET() {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
-    // Securely retrieve client's MP access token from database
     const client = await prisma.client.findUnique({
       where: { id: session.user.id },
       select: { mpAccessToken: true },
@@ -44,73 +43,84 @@ export async function GET() {
     if (!token) {
       return NextResponse.json({ error: 'Token do Mercado Pago não configurado.' }, { status: 400 })
     }
+
     const devicesList: MpPosDevice[] = []
     const seenIds = new Set<string>()
     let tokenRejected = false
 
-    // 1. Fetch from Mercado Pago POS API
+    // 1. Query Terminals API: https://api.mercadopago.com/terminals/v1/list
     try {
-      const posRes = await fetch('https://api.mercadopago.com/pos', {
+      const termRes = await fetch('https://api.mercadopago.com/terminals/v1/list', {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        cache: 'no-store',
       })
 
-      if (posRes.status === 401 || posRes.status === 403) {
+      if (termRes.status === 401 || termRes.status === 403) {
         tokenRejected = true
-      } else if (posRes.ok) {
-        const posData = await posRes.json()
-        const items = posData?.results || (Array.isArray(posData) ? posData : [])
-        for (const item of items) {
-          const deviceId = String(item.id || item.pos_id || item.external_id)
-          if (deviceId && !seenIds.has(deviceId)) {
-            seenIds.add(deviceId)
+      } else if (termRes.ok) {
+        const termData = await termRes.json()
+        const terminals =
+          termData?.data?.terminals ||
+          termData?.terminals ||
+          (Array.isArray(termData) ? termData : [])
+
+        for (const term of terminals) {
+          const terminalId = String(term.id || term.pos_id || '')
+          if (terminalId && !seenIds.has(terminalId)) {
+            seenIds.add(terminalId)
+            const displayName = String(term.id || '')
+              .replace('__', ' • Serial: ')
+              .replace('_', ' ')
             devicesList.push({
-              id: deviceId,
-              name: item.name || `Máquina POS #${deviceId}`,
-              pos_id: item.id ? String(item.id) : undefined,
-              store_id: item.store_id ? String(item.store_id) : undefined,
-              operating_mode: item.operating_mode || 'PDV / Point',
-              external_id: item.external_id || undefined,
+              id: terminalId,
+              name: displayName || `Máquina ${terminalId}`,
+              pos_id: term.pos_id ? String(term.pos_id) : undefined,
+              store_id: term.store_id ? String(term.store_id) : undefined,
+              operating_mode: term.operating_mode || 'STANDALONE',
             })
           }
         }
       }
     } catch (err) {
-      console.warn('[mercadopago/devices] Error fetching /pos:', err)
+      console.warn('[mercadopago/devices] Error fetching /terminals/v1/list:', err)
     }
 
-    // 2. Fetch from Mercado Pago Point Integration Devices API
-    try {
-      const pointRes = await fetch('https://api.mercadopago.com/point/integration-api/devices', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      })
+    // 2. Fallback to /pos API if terminals list returned empty
+    if (devicesList.length === 0 && !tokenRejected) {
+      try {
+        const posRes = await fetch('https://api.mercadopago.com/pos', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+        })
 
-      if (pointRes.status === 401 || pointRes.status === 403) {
-        tokenRejected = true
-      } else if (pointRes.ok) {
-        const pointData = await pointRes.json()
-        const devices = pointData?.devices || (Array.isArray(pointData) ? pointData : [])
-        for (const dev of devices) {
-          const deviceId = String(dev.id || dev.pos_id)
-          if (deviceId && !seenIds.has(deviceId)) {
-            seenIds.add(deviceId)
-            devicesList.push({
-              id: deviceId,
-              name: dev.name || `Point Device #${deviceId}`,
-              pos_id: dev.pos_id ? String(dev.pos_id) : String(dev.id),
-              operating_mode: dev.operating_mode || 'Point',
-              model: dev.pos_type || dev.model || 'Point Smart / POS',
-            })
+        if (posRes.status === 401 || posRes.status === 403) {
+          tokenRejected = true
+        } else if (posRes.ok) {
+          const posData = await posRes.json()
+          const items = posData?.results || (Array.isArray(posData) ? posData : [])
+          for (const item of items) {
+            const deviceId = String(item.id || item.pos_id || item.external_id)
+            if (deviceId && !seenIds.has(deviceId)) {
+              seenIds.add(deviceId)
+              devicesList.push({
+                id: deviceId,
+                name: item.name || `Máquina POS #${deviceId}`,
+                pos_id: item.id ? String(item.id) : undefined,
+                store_id: item.store_id ? String(item.store_id) : undefined,
+                operating_mode: item.operating_mode || 'Point / POS',
+              })
+            }
           }
         }
+      } catch (err) {
+        console.warn('[mercadopago/devices] Error fetching /pos:', err)
       }
-    } catch (err) {
-      console.warn('[mercadopago/devices] Error fetching /point/integration-api/devices:', err)
     }
 
     if (tokenRejected && devicesList.length === 0) {
@@ -131,6 +141,7 @@ export async function GET() {
       where: { id: session.user.id },
       data: { mpTokenValid: true, mpTokenCheckedAt: new Date() },
     })
+
     return NextResponse.json({ devices: devicesList })
   } catch (error) {
     console.error('[mercadopago/devices GET]', error)
