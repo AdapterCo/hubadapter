@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { encryptSecret, generateDeviceSecret, hashSecret } from "@/lib/crypto";
 
-async function requireAdmin(req: NextRequest) {
+async function requireAdmin() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return null;
   if (session.user.role !== "ADMIN") return null;
@@ -11,15 +12,20 @@ async function requireAdmin(req: NextRequest) {
 }
 
 // GET /api/admin/devices - all Device records
-export async function GET(req: NextRequest) {
-  const session = await requireAdmin(req);
+export async function GET() {
+  const session = await requireAdmin();
   if (!session) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
     const devices = await prisma.device.findMany({
-      include: {
+      select: {
+        id: true,
+        idmaq: true,
+        claimed: true,
+        clientId: true,
+        createdAt: true,
         client: {
           select: { id: true, name: true, email: true },
         },
@@ -39,7 +45,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/admin/devices - add single or bulk devices
 export async function POST(req: NextRequest) {
-  const session = await requireAdmin(req);
+  const session = await requireAdmin();
   if (!session) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -61,11 +67,20 @@ export async function POST(req: NextRequest) {
       }
 
       let createdCount = 0;
+      const credentials: Array<{ idmaq: string; deviceApiKey: string }> = [];
       for (const idmaq of idmaqs) {
         try {
+          const cleanIdmaq = idmaq.trim().toUpperCase();
+          const deviceApiKey = generateDeviceSecret();
           await prisma.device.create({
-            data: { idmaq: idmaq.trim(), claimed: false },
+            data: {
+              idmaq: cleanIdmaq,
+              claimed: false,
+              apiKeyHash: hashSecret(deviceApiKey),
+              commandSecret: encryptSecret(deviceApiKey),
+            },
           });
+          credentials.push({ idmaq: cleanIdmaq, deviceApiKey });
           createdCount++;
         } catch {
           // Ignore duplicate entries gracefully
@@ -73,7 +88,12 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { created: createdCount, skippedDuplicates: idmaqs.length - createdCount },
+        {
+          created: createdCount,
+          skippedDuplicates: idmaqs.length - createdCount,
+          credentials,
+          warning: "As chaves são exibidas apenas nesta resposta.",
+        },
         { status: 201 }
       );
     }
@@ -87,11 +107,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const cleanIdmaq = idmaq.trim().toUpperCase();
+    const deviceApiKey = generateDeviceSecret();
     const device = await prisma.device.create({
-      data: { idmaq: idmaq.trim(), claimed: false },
+      data: {
+        idmaq: cleanIdmaq,
+        claimed: false,
+        apiKeyHash: hashSecret(deviceApiKey),
+        commandSecret: encryptSecret(deviceApiKey),
+      },
     });
 
-    return NextResponse.json(device, { status: 201 });
+    return NextResponse.json(
+      {
+        ...device,
+        apiKeyHash: undefined,
+        commandSecret: undefined,
+        deviceApiKey,
+        warning: "A chave é exibida apenas nesta resposta.",
+      },
+      { status: 201 }
+    );
   } catch (error: unknown) {
     if (
       typeof error === "object" &&

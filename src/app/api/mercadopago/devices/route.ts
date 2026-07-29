@@ -1,7 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { decryptSecret } from '@/lib/crypto'
+
+export const dynamic = 'force-dynamic'
 
 export interface MpPosDevice {
   id: string
@@ -13,7 +16,7 @@ export interface MpPosDevice {
   model?: string
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions)
 
@@ -37,9 +40,13 @@ export async function GET(req: NextRequest) {
       )
     }
 
-    const token = client.mpAccessToken.trim()
+    const token = decryptSecret(client.mpAccessToken)
+    if (!token) {
+      return NextResponse.json({ error: 'Token do Mercado Pago não configurado.' }, { status: 400 })
+    }
     const devicesList: MpPosDevice[] = []
     const seenIds = new Set<string>()
+    let tokenRejected = false
 
     // 1. Fetch from Mercado Pago POS API
     try {
@@ -50,7 +57,9 @@ export async function GET(req: NextRequest) {
         },
       })
 
-      if (posRes.ok) {
+      if (posRes.status === 401 || posRes.status === 403) {
+        tokenRejected = true
+      } else if (posRes.ok) {
         const posData = await posRes.json()
         const items = posData?.results || (Array.isArray(posData) ? posData : [])
         for (const item of items) {
@@ -81,7 +90,9 @@ export async function GET(req: NextRequest) {
         },
       })
 
-      if (pointRes.ok) {
+      if (pointRes.status === 401 || pointRes.status === 403) {
+        tokenRejected = true
+      } else if (pointRes.ok) {
         const pointData = await pointRes.json()
         const devices = pointData?.devices || (Array.isArray(pointData) ? pointData : [])
         for (const dev of devices) {
@@ -102,6 +113,24 @@ export async function GET(req: NextRequest) {
       console.warn('[mercadopago/devices] Error fetching /point/integration-api/devices:', err)
     }
 
+    if (tokenRejected && devicesList.length === 0) {
+      await prisma.client.update({
+        where: { id: session.user.id },
+        data: { mpTokenValid: false, mpTokenCheckedAt: new Date() },
+      })
+      return NextResponse.json(
+        {
+          error: 'O Access Token do Mercado Pago foi rejeitado ou expirou.',
+          needsConfig: true,
+        },
+        { status: 401 }
+      )
+    }
+
+    await prisma.client.update({
+      where: { id: session.user.id },
+      data: { mpTokenValid: true, mpTokenCheckedAt: new Date() },
+    })
     return NextResponse.json({ devices: devicesList })
   } catch (error) {
     console.error('[mercadopago/devices GET]', error)

@@ -13,9 +13,11 @@ export async function GET(req: NextRequest) {
   }
 
   const clientId = session.user.id;
+  const isAdmin = session.user.role === "ADMIN";
 
   let isClosed = false;
-  let lastCreatedAt: Date = new Date();
+  let lastTelemetryAt: Date = new Date();
+  let lastPaymentAt: Date = new Date();
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -47,10 +49,8 @@ export async function GET(req: NextRequest) {
           // Fetch new telemetry events since last poll
           const events = await prisma.telemetryEvent.findMany({
             where: {
-              createdAt: { gt: lastCreatedAt },
-              esp32: {
-                machine: { clientId },
-              },
+              createdAt: { gt: lastTelemetryAt },
+              ...(isAdmin ? {} : { esp32: { machine: { clientId } } }),
             },
             orderBy: { createdAt: "asc" },
             take: 50,
@@ -62,15 +62,15 @@ export async function GET(req: NextRequest) {
           });
 
           for (const event of events) {
-            lastCreatedAt = event.createdAt;
+            lastTelemetryAt = event.createdAt;
             sendEvent({ type: "telemetry", event });
           }
 
           // Also fetch recent approved payments
           const payments = await prisma.payment.findMany({
             where: {
-              clientId,
-              createdAt: { gt: lastCreatedAt },
+              ...(isAdmin ? {} : { clientId }),
+              createdAt: { gt: lastPaymentAt },
             },
             orderBy: { createdAt: "asc" },
             take: 10,
@@ -82,10 +82,13 @@ export async function GET(req: NextRequest) {
           });
 
           for (const payment of payments) {
-            if (payment.createdAt > lastCreatedAt) {
-              lastCreatedAt = payment.createdAt;
+            if (payment.createdAt > lastPaymentAt) {
+              lastPaymentAt = payment.createdAt;
             }
-            sendEvent({ type: "payment", payment });
+            sendEvent({
+              type: "payment",
+              payment: { ...payment, amount: Number(payment.amount) },
+            });
           }
         } catch (err) {
           console.error("[telemetry/stream poll error]", err);

@@ -10,7 +10,7 @@ export default async function ClientLayout({ children }: { children: React.React
 
   return (
     <div className="layout-wrapper">
-      <Sidebar role={session.user.role} userName={session.user.name} userEmail={session.user.email} />
+      <Sidebar role={session.user.role} userName={session.user.name} />
       <main className="main-content">
         {children}
       </main>

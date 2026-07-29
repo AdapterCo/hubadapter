@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 
 interface Esp32 {
   id: string
@@ -76,7 +77,7 @@ export default function MachineDetailPage() {
       } else {
         setMpDevices(data.devices || [])
       }
-    } catch (err) {
+    } catch {
       setMpError('Erro de conexão ao buscar máquinas.')
     } finally {
       setLoadingMp(false)
@@ -106,20 +107,20 @@ export default function MachineDetailPage() {
         const d = await res.json()
         alert(d.error || 'Erro ao vincular máquina')
       }
-    } catch (err) {
+    } catch {
       alert('Erro de conexão ao vincular.')
     } finally {
       setBinding(false)
     }
   }
 
-  async function sendMqttCommand(topic: string, action: string) {
+  async function sendMqttCommand(esp32Id: string, action: 'ping' | 'credit_test') {
     await fetch('/api/mqtt/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        topic,
-        message: JSON.stringify({ action, timestamp: Date.now() }),
+        esp32Id,
+        action,
       }),
     })
     alert(`Comando ${action.toUpperCase()} enviado para o ESP32!`)
@@ -138,7 +139,7 @@ export default function MachineDetailPage() {
       <div className="page-content">
         <div className="empty-state">
           <h2>Máquina não encontrada</h2>
-          <a href="/maquinas" className="btn btn-secondary" style={{ marginTop: '16px' }}>⬅️ Voltar para Minhas Máquinas</a>
+          <Link href="/maquinas" className="btn btn-secondary" style={{ marginTop: '16px' }}>⬅️ Voltar para Minhas Máquinas</Link>
         </div>
       </div>
     )
@@ -151,7 +152,7 @@ export default function MachineDetailPage() {
           <h1>🖥️ {machine.name}</h1>
           <p>{machine.location ? `📍 ${machine.location}` : 'Sem localização definida'}</p>
         </div>
-        <a href="/maquinas" className="btn btn-secondary">⬅️ Voltar</a>
+        <Link href="/maquinas" className="btn btn-secondary">⬅️ Voltar</Link>
       </div>
 
       <div className="section-title">📡 Dispositivo ESP32 (IDMAQ) Vinculado</div>
@@ -228,13 +229,13 @@ export default function MachineDetailPage() {
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => sendMqttCommand(esp.mqttTopic, 'ping')}
+                    onClick={() => sendMqttCommand(esp.id, 'ping')}
                   >
                     📡 Testar Conexão (Ping)
                   </button>
                   <button
                     className="btn btn-success btn-sm"
-                    onClick={() => sendMqttCommand(esp.mqttTopic, 'credit_test')}
+                    onClick={() => sendMqttCommand(esp.id, 'credit_test')}
                   >
                     ⚡ Teste de Crédito (+ R$ 1,00)
                   </button>
@@ -272,9 +273,9 @@ export default function MachineDetailPage() {
                 </div>
                 {needsConfig && (
                   <div style={{ textAlign: 'center', marginTop: '16px' }}>
-                    <a href="/configuracoes" className="btn btn-primary">
+                    <Link href="/configuracoes" className="btn btn-primary">
                       ⚙️ Ir para Configurações & Salvar Token MP
-                    </a>
+                    </Link>
                   </div>
                 )}
               </div>

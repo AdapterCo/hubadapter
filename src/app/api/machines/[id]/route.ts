@@ -6,8 +6,9 @@ import prisma from "@/lib/prisma";
 // GET /api/machines/[id] - get a single machine with its esp32s
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const session = await getServerSession(authOptions);
 
@@ -17,12 +18,23 @@ export async function GET(
 
     const machine = await prisma.machine.findFirst({
       where: {
-        id: params.id,
+        id,
         clientId: session.user.id,
       },
       include: {
         esps: {
           orderBy: { serialNumber: "asc" },
+          select: {
+            id: true,
+            serialNumber: true,
+            mqttTopic: true,
+            online: true,
+            lastSeen: true,
+            credits: true,
+            mpPosId: true,
+            mpPosName: true,
+            createdAt: true,
+          },
         },
       },
     });
@@ -42,7 +54,8 @@ export async function GET(
           : false;
         return {
           ...e,
-          online: e.online || isRecentlyActive,
+          credits: Number(e.credits),
+          online: isRecentlyActive,
         };
       }),
     };
@@ -60,8 +73,9 @@ export async function GET(
 // DELETE /api/machines/[id] - delete a machine
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const session = await getServerSession(authOptions);
 
@@ -71,7 +85,7 @@ export async function DELETE(
 
     const machine = await prisma.machine.findFirst({
       where: {
-        id: params.id,
+        id,
         clientId: session.user.id,
       },
     });
@@ -80,7 +94,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Machine not found" }, { status: 404 });
     }
 
-    await prisma.machine.delete({ where: { id: params.id } });
+    await prisma.machine.delete({ where: { id } });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

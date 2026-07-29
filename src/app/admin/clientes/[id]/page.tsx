@@ -2,17 +2,19 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { redirect, notFound } from 'next/navigation'
+import Link from 'next/link'
 
 function fmt(val: number) {
   return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-export default async function AdminClienteDetailPage({ params }: { params: { id: string } }) {
+export default async function AdminClienteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const session = await getServerSession(authOptions)
   if (!session || session.user.role !== 'ADMIN') redirect('/login')
 
   const client = await prisma.client.findUnique({
-    where: { id: params.id },
+    where: { id },
     include: {
       devices: true,
       machines: {
@@ -30,7 +32,11 @@ export default async function AdminClienteDetailPage({ params }: { params: { id:
 
   if (!client) notFound()
 
-  const totalPayments = client.payments.reduce((acc, p) => acc + (p.status === 'approved' ? p.amount : 0), 0)
+  const totalPayments = client.payments.reduce(
+    (acc, p) => acc + (p.status === 'approved' ? Number(p.amount) : 0),
+    0
+  )
+  const onlineCutoff = Date.now() - 10 * 60 * 1000
 
   return (
     <div className="page-content">
@@ -39,7 +45,7 @@ export default async function AdminClienteDetailPage({ params }: { params: { id:
           <h1>Detalhes do Cliente</h1>
           <p>{client.name} — {client.email}</p>
         </div>
-        <a href="/admin/clientes" className="btn btn-secondary">⬅️ Voltar</a>
+        <Link href="/admin/clientes" className="btn btn-secondary">⬅️ Voltar</Link>
       </div>
 
       <div className="stats-grid">
@@ -80,7 +86,7 @@ export default async function AdminClienteDetailPage({ params }: { params: { id:
             type="text"
             readOnly
             className="form-input"
-            value={client.mpAccessToken ? `${client.mpAccessToken.slice(0, 10)}...` : 'Não configurado pelo cliente'}
+            value={client.mpAccessToken ? 'Configurado' : 'Não configurado pelo cliente'}
             style={{ fontFamily: 'monospace' }}
           />
         </div>
@@ -114,9 +120,11 @@ export default async function AdminClienteDetailPage({ params }: { params: { id:
                       <td style={{ fontFamily: 'monospace' }}>{e.serialNumber}</td>
                       <td style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--accent-light)' }}>{e.mqttTopic}</td>
                       <td>{e.mpPosName ? `💳 ${e.mpPosName}` : <span style={{ color: 'var(--text-muted)' }}>Não vinculada</span>}</td>
-                      <td className="strong">{e.credits.toFixed(2)}</td>
+                      <td className="strong">{Number(e.credits).toFixed(2)}</td>
                       <td>
-                        {e.online ? <span className="badge online">Online</span> : <span className="badge offline">Offline</span>}
+                        {e.lastSeen && new Date(e.lastSeen).getTime() >= onlineCutoff
+                          ? <span className="badge online">Online</span>
+                          : <span className="badge offline">Offline</span>}
                       </td>
                     </tr>
                   ))
@@ -153,7 +161,7 @@ export default async function AdminClienteDetailPage({ params }: { params: { id:
                       {new Date(p.createdAt).toLocaleString('pt-BR')}
                     </td>
                     <td style={{ fontFamily: 'monospace' }}>{p.esp32.serialNumber}</td>
-                    <td className="strong">{fmt(p.amount)}</td>
+                    <td className="strong">{fmt(Number(p.amount))}</td>
                     <td>
                       <span className={`badge ${p.status}`}>
                         {p.status === 'approved' ? 'Aprovado' : 'Pendente'}

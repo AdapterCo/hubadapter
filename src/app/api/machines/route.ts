@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 
 // GET /api/machines - list all machines for the current client
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions);
 
@@ -15,7 +15,19 @@ export async function GET(req: NextRequest) {
     const machines = await prisma.machine.findMany({
       where: { clientId: session.user.id },
       include: {
-        esps: true,
+        esps: {
+          select: {
+            id: true,
+            serialNumber: true,
+            mqttTopic: true,
+            online: true,
+            lastSeen: true,
+            credits: true,
+            mpPosId: true,
+            mpPosName: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: { name: "asc" },
     });
@@ -31,7 +43,8 @@ export async function GET(req: NextRequest) {
           : false;
         return {
           ...e,
-          online: e.online || isRecentlyActive,
+          credits: Number(e.credits),
+          online: isRecentlyActive,
         };
       }),
     }));

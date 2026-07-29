@@ -39,6 +39,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const provisionedDevice = await prisma.device.findFirst({
+      where: {
+        idmaq: cleanSerial,
+        claimed: true,
+        clientId: session.user.id,
+        apiKeyHash: { not: null },
+        commandSecret: { not: null },
+      },
+    });
+    if (!provisionedDevice) {
+      return NextResponse.json(
+        { error: "Device is not provisioned or does not belong to this client" },
+        { status: 409 }
+      );
+    }
+
     // Create esp32 with serialNumber as idmaq/mqttTopic
     const esp32 = await prisma.esp32.create({
       data: {
@@ -47,10 +63,15 @@ export async function POST(req: NextRequest) {
         mqttTopic: cleanSerial,
         online: false,
         credits: 0,
+        apiKeyHash: provisionedDevice.apiKeyHash,
+        commandSecret: provisionedDevice.commandSecret,
       },
     });
 
-    return NextResponse.json(esp32, { status: 201 });
+    return NextResponse.json(
+      { ...esp32, credits: Number(esp32.credits) },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("[esp32 POST]", error);
     return NextResponse.json(

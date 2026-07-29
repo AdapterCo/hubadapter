@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/payments - returns payments for current client with pagination
 export async function GET(req: NextRequest) {
   try {
@@ -14,8 +16,10 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const esp32Id = searchParams.get("esp32Id") ?? undefined;
-    const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 200);
-    const page = Math.max(parseInt(searchParams.get("page") ?? "1", 10), 1);
+    const parsedLimit = Number.parseInt(searchParams.get("limit") ?? "50", 10);
+    const parsedPage = Number.parseInt(searchParams.get("page") ?? "1", 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
+    const page = Number.isFinite(parsedPage) ? Math.max(parsedPage, 1) : 1;
     const skip = (page - 1) * limit;
 
     const where = {
@@ -35,7 +39,12 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json(payments);
+    return NextResponse.json(
+      payments.map((payment) => ({
+        ...payment,
+        amount: Number(payment.amount),
+      }))
+    );
   } catch (error) {
     console.error("[payments GET]", error);
     return NextResponse.json(

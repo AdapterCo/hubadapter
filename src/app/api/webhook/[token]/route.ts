@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { decryptSecret, signCommand } from '@/lib/crypto'
+import { verifyMercadoPagoSignature } from '@/lib/mercadopago'
+import { checkRateLimit, getRequestIp } from '@/lib/rate-limit'
+import { processOutboxBatch } from '@/lib/outbox'
+
+export const dynamic = 'force-dynamic'
 
 interface MercadoPagoPayment {
   id: number | string
   status: string
   transaction_amount: number
+  currency_id: string
   external_reference?: string
   pos_id?: string | number
-  store_id?: string | number
   point_of_interaction?: {
     transaction_data?: {
       pos_id?: string | number
@@ -15,83 +22,137 @@ interface MercadoPagoPayment {
   }
 }
 
+interface MercadoPagoNotification {
+  data?: { id?: string | number }
+  id?: string | number
+  resource?: string
+}
+
+function paymentIdFromBody(body: MercadoPagoNotification): string {
+  let value = body?.data?.id || body?.id || body?.resource || ''
+  if (typeof value === 'string' && value.includes('/')) {
+    value = value.split('/').pop() || ''
+  }
+  return String(value).trim()
+}
+
 export async function POST(
   req: NextRequest,
-  { params }: { params: { token: string } }
+  { params }: { params: Promise<{ token: string }> }
 ) {
-  try {
-    const { token } = params
+  const { token } = await params
+  const contentLength = Number(req.headers.get('content-length') || 0)
+  if (contentLength > 64 * 1024) {
+    return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+  }
 
-    // 1. Find client by webhookToken
-    const client = await prisma.client.findFirst({
+  const rateLimit = checkRateLimit(
+    `webhook:${token}:${getRequestIp(req)}`,
+    120,
+    60 * 1000
+  )
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } }
+    )
+  }
+
+  try {
+    const client = await prisma.client.findUnique({
       where: { webhookToken: token },
+      select: {
+        id: true,
+        active: true,
+        mpAccessToken: true,
+        mpWebhookSecret: true,
+      },
     })
 
-    if (!client) {
+    if (!client?.active) {
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
-    const body = await req.json().catch(() => ({}))
-
-    // 2. Extract numerical payment ID cleanly from body
-    let rawPaymentId = body?.data?.id || body?.id || body?.resource || ''
-    if (typeof rawPaymentId === 'string' && rawPaymentId.includes('/')) {
-      const parts = rawPaymentId.split('/')
-      rawPaymentId = parts[parts.length - 1]
+    const body: unknown = await req.json().catch(() => null)
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
     }
 
+    const rawPaymentId = paymentIdFromBody(body as MercadoPagoNotification)
     if (!rawPaymentId) {
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
-    // 3. Fetch full payment details from MercadoPago API using client's access token
-    let payment: MercadoPagoPayment | null = null
-    if (client.mpAccessToken) {
-      try {
-        const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${rawPaymentId}`, {
-          headers: {
-            Authorization: `Bearer ${client.mpAccessToken.trim()}`,
-            'Content-Type': 'application/json',
-          },
-        })
+    const webhookSecret = decryptSecret(client.mpWebhookSecret)
+    if (
+      !webhookSecret ||
+      !verifyMercadoPagoSignature({
+        signature: req.headers.get('x-signature'),
+        requestId: req.headers.get('x-request-id'),
+        dataId: rawPaymentId.toLowerCase(),
+        secret: webhookSecret,
+      })
+    ) {
+      return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 })
+    }
 
-        if (mpRes.ok) {
-          payment = await mpRes.json()
-        } else {
-          console.warn('[webhook] MP fetch failed:', mpRes.status, await mpRes.text())
-        }
-      } catch (err) {
-        console.error('[webhook] MP fetch error:', err)
+    const accessToken = decryptSecret(client.mpAccessToken)
+    if (!accessToken) {
+      return NextResponse.json({ error: 'Mercado Pago token is not configured' }, { status: 409 })
+    }
+
+    const mpResponse = await fetch(
+      `https://api.mercadopago.com/v1/payments/${encodeURIComponent(rawPaymentId)}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10_000),
       }
+    )
+
+    if (!mpResponse.ok) {
+      if (mpResponse.status === 401 || mpResponse.status === 403) {
+        await prisma.client.update({
+          where: { id: client.id },
+          data: { mpTokenValid: false, mpTokenCheckedAt: new Date() },
+        })
+      }
+      console.error('[webhook] Mercado Pago validation failed', {
+        status: mpResponse.status,
+        paymentId: rawPaymentId,
+        clientId: client.id,
+      })
+      return NextResponse.json({ error: 'Payment validation failed' }, { status: 502 })
     }
 
-    // Fallback if MP fetch failed or token not provided
-    if (!payment && body?.data) {
-      payment = body.data as MercadoPagoPayment
-    }
-
-    if (!payment) {
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { mpTokenValid: true, mpTokenCheckedAt: new Date() },
+    })
+    const payment = (await mpResponse.json()) as MercadoPagoPayment
+    if (
+      String(payment.id) !== rawPaymentId ||
+      payment.status.toLowerCase() !== 'approved' ||
+      payment.currency_id !== 'BRL' ||
+      !Number.isFinite(payment.transaction_amount) ||
+      payment.transaction_amount <= 0
+    ) {
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
-    const externalReference = payment.external_reference ?? ''
+    const externalReference = String(payment.external_reference || '').trim()
     const posId = String(
       payment.pos_id ||
       payment.point_of_interaction?.transaction_data?.pos_id ||
       ''
-    )
+    ).trim()
 
-    // 4. Find matching ESP32 for this client
-    let esp32 = null
+    let esp32 = posId
+      ? await prisma.esp32.findFirst({
+          where: { mpPosId: posId, machine: { clientId: client.id } },
+        })
+      : null
 
-    // Match strategy A: match by Mercado Pago POS ID (mpPosId)
-    if (posId) {
-      esp32 = await prisma.esp32.findFirst({
-        where: { mpPosId: posId, machine: { clientId: client.id } },
-      })
-    }
-
-    // Match strategy B: external_reference = "esp32:{id}"
     if (!esp32 && externalReference) {
       const espMatch = externalReference.match(/^esp32:(.+)$/i)
       if (espMatch) {
@@ -101,98 +162,103 @@ export async function POST(
       }
     }
 
-    // Match strategy C: external_reference = "idmaq:{serial}" or serialNumber directly
     if (!esp32 && externalReference) {
-      const serialClean = externalReference.replace(/^idmaq:/i, '').trim().toUpperCase()
+      const serial = externalReference.replace(/^idmaq:/i, '').trim().toUpperCase()
       esp32 = await prisma.esp32.findFirst({
-        where: { serialNumber: serialClean, machine: { clientId: client.id } },
+        where: { serialNumber: serial, machine: { clientId: client.id } },
       })
     }
 
-    // Match strategy D: if client has only 1 ESP32, fallback to that single ESP32
-    if (!esp32) {
-      const clientEsps = await prisma.esp32.findMany({
-        where: { machine: { clientId: client.id } },
+    if (!esp32 || (!posId && !externalReference)) {
+      await prisma.webhookIssue.create({
+        data: {
+          clientId: client.id,
+          paymentId: rawPaymentId,
+          reason: 'Pagamento aprovado sem dispositivo associado',
+          posId: posId || null,
+          externalReference: externalReference || null,
+        },
       })
-      if (clientEsps.length === 1) {
-        esp32 = clientEsps[0]
-      }
+      console.warn('[webhook] Payment could not be associated', {
+        paymentId: rawPaymentId,
+        clientId: client.id,
+        posId,
+        externalReference,
+      })
+      return NextResponse.json({ error: 'Payment device not found' }, { status: 422 })
     }
 
-    if (!esp32) {
-      console.warn(`[webhook] No matching ESP32 found for client ${client.id}, ref: "${externalReference}", posId: "${posId}"`)
-      return NextResponse.json({ ok: true }, { status: 200 })
+    const commandSecret = decryptSecret(esp32.commandSecret)
+    if (!commandSecret) {
+      return NextResponse.json({ error: 'Device is not securely provisioned' }, { status: 409 })
     }
 
-    const isApproved = String(payment.status).toLowerCase() === 'approved'
-
-    // 5. If payment is approved, credit ESP32 & publish MQTT
-    if (isApproved) {
-      const mpPayIdStr = String(payment.id || rawPaymentId)
-
-      // Prevent duplicate payment processing
-      const existingPay = await prisma.payment.findUnique({ where: { mpPaymentId: mpPayIdStr } })
-      if (!existingPay) {
-        await prisma.payment.create({
-          data: {
-            clientId: client.id,
-            esp32Id: esp32.id,
-            mpPaymentId: mpPayIdStr,
-            amount: payment.transaction_amount || 0,
-            status: 'approved',
-            externalRef: externalReference || posId,
-          },
-        })
-
-        // Increment ESP32 credit and touch lastSeen / online
-        await prisma.esp32.update({
-          where: { id: esp32.id },
-          data: {
-            credits: { increment: payment.transaction_amount || 0 },
-            online: true,
-            lastSeen: new Date(),
-          },
-        })
-
-        // Publish to MQTT to release credit on physical machine
-        try {
-          await fetch('https://apimqtt.adapterco.com.br/publish', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              topic: esp32.mqttTopic,
-              message: JSON.stringify({
-                action: 'credit',
-                amount: payment.transaction_amount,
-                paymentId: mpPayIdStr,
-                serialNumber: esp32.serialNumber,
-              }),
-            }),
-          })
-        } catch (mqttErr) {
-          console.error('[webhook] MQTT publish failed:', mqttErr)
-        }
-      }
-    }
-
-    // 6. Log TelemetryEvent for real-time telemetry screen
-    await prisma.telemetryEvent.create({
-      data: {
-        esp32Id: esp32.id,
-        type: 'payment',
-        payload: JSON.stringify({
-          mpPaymentId: payment.id || rawPaymentId,
-          status: payment.status,
-          amount: payment.transaction_amount,
-          posId,
-          idmaq: esp32.serialNumber,
-        }),
-      },
+    const amount = new Prisma.Decimal(payment.transaction_amount).toDecimalPlaces(2)
+    const amountText = amount.toFixed(2)
+    const mpPaymentId = String(payment.id)
+    const action = 'credit'
+    const payload = JSON.stringify({
+      action,
+      amount: Number(amountText),
+      paymentId: mpPaymentId,
+      serialNumber: esp32.serialNumber,
+      signature: signCommand(commandSecret, action, amountText, mpPaymentId),
     })
 
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.payment.findUnique({
+        where: { mpPaymentId },
+        select: { id: true },
+      })
+      if (existing) return
+
+      const storedPayment = await tx.payment.create({
+        data: {
+          clientId: client.id,
+          esp32Id: esp32.id,
+          mpPaymentId,
+          amount,
+          status: 'approved',
+          externalRef: externalReference || posId,
+        },
+      })
+
+      await tx.esp32.update({
+        where: { id: esp32.id },
+        data: {
+          credits: { increment: amount },
+          lastSeen: new Date(),
+        },
+      })
+
+      await tx.outboxMessage.create({
+        data: {
+          paymentId: storedPayment.id,
+          esp32Id: esp32.id,
+          topic: esp32.mqttTopic,
+          payload,
+        },
+      })
+
+      await tx.telemetryEvent.create({
+        data: {
+          esp32Id: esp32.id,
+          type: 'payment',
+          payload: JSON.stringify({
+            mpPaymentId,
+            status: payment.status,
+            amount: Number(amountText),
+            posId,
+            idmaq: esp32.serialNumber,
+          }),
+        },
+      })
+    })
+
+    await processOutboxBatch(5)
     return NextResponse.json({ ok: true }, { status: 200 })
   } catch (error) {
-    console.error('[webhook] Error processing notification:', error)
-    return NextResponse.json({ ok: true }, { status: 200 })
+    console.error('[webhook] Error processing notification', error)
+    return NextResponse.json({ error: 'Temporary processing failure' }, { status: 500 })
   }
 }

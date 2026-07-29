@@ -36,9 +36,23 @@ export async function POST(req: NextRequest) {
         mpPosId: mpPosId || null,
         mpPosName: mpPosName || null,
       },
+      select: {
+        id: true,
+        serialNumber: true,
+        mqttTopic: true,
+        online: true,
+        lastSeen: true,
+        credits: true,
+        mpPosId: true,
+        mpPosName: true,
+        createdAt: true,
+      },
     })
 
-    return NextResponse.json({ success: true, esp32: updated })
+    return NextResponse.json({
+      success: true,
+      esp32: { ...updated, credits: Number(updated.credits) },
+    })
   } catch (error) {
     console.error('[mercadopago/bind POST]', error)
     return NextResponse.json({ error: 'Erro interno ao vincular máquina de cartão' }, { status: 500 })

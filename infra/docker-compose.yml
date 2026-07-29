@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_adapterhub_sec2024}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       POSTGRES_DB: adapterhub
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -25,8 +25,13 @@ services:
       dockerfile: infra/Dockerfile.web
     container_name: adapterhub-migrate
     environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
-    command: ["sh", "-c", "npx prisma db push --accept-data-loss && node prisma/seed.js"]
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/adapterhub?schema=public
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY is required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin AdapterHub}
+      SEED_DEVICE_IDS: ${SEED_DEVICE_IDS:-}
+    command: ["sh", "-c", "npx prisma migrate deploy && npm run db:encrypt-secrets && npm run db:seed"]
     depends_on:
       db:
         condition: service_healthy
@@ -46,14 +51,19 @@ services:
       PORT: "3019"
       HOSTNAME: "0.0.0.0"
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-super-secret-adapterhub-key-2024}
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/adapterhub?schema=public
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY is required}
+      OUTBOX_WORKER_SECRET: ${OUTBOX_WORKER_SECRET:?OUTBOX_WORKER_SECRET is required}
+      MQTT_API_TOKEN: ${MQTT_API_TOKEN:?MQTT_API_TOKEN is required}
       NEXTAUTH_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
       NEXT_PUBLIC_APP_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
       MQTT_API_URL: ${MQTT_API_URL:-https://apimqtt.adapterco.com.br/publish}
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3019/login"]
       interval: 15s
@@ -73,6 +83,51 @@ services:
     networks:
       - adapterhub_internal
       - traefik9
+
+  outbox-worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+    container_name: adapterhub-outbox-worker
+    restart: unless-stopped
+    environment:
+      OUTBOX_WORKER_SECRET: ${OUTBOX_WORKER_SECRET:?OUTBOX_WORKER_SECRET is required}
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          wget -qO- --post-data='' --header="Authorization: Bearer $$OUTBOX_WORKER_SECRET" http://web:3019/api/internal/outbox/process || true
+          sleep 5
+        done
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - adapterhub_internal
+
+  telemetry-cleanup:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+    container_name: adapterhub-telemetry-cleanup
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/adapterhub?schema=public
+      TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-60}
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          npm run db:cleanup
+          sleep 86400
+        done
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - adapterhub_internal
 
 volumes:
   pgdata:

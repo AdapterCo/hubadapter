@@ -2,56 +2,75 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { decryptSecret, signCommand } from "@/lib/crypto";
+import { z } from "zod";
+
+export const dynamic = "force-dynamic";
+
+const publishSchema = z.object({
+  esp32Id: z.string().min(1).max(128),
+  action: z.enum(["ping", "credit_test"]),
+}).strict();
 
 export async function POST(req: NextRequest) {
   try {
+    if (Number(req.headers.get("content-length") || 0) > 8 * 1024) {
+      return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+    }
     const session = await getServerSession(authOptions);
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
-    const { topic, message } = body;
-
-    if (!topic || message === undefined) {
+    const parsed = publishSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Missing topic or message" },
+        { error: "Invalid esp32Id or action" },
         { status: 400 }
       );
     }
+    const { esp32Id, action } = parsed.data;
 
-    const cleanTopic = String(topic).trim().toUpperCase();
-
-    // Touch ESP32 online status in DB if topic matches serialNumber / IDMAQ or mqttTopic
-    try {
-      const esp32 = await prisma.esp32.findFirst({
-        where: {
-          OR: [
-            { serialNumber: cleanTopic },
-            { mqttTopic: String(topic) },
-          ],
-        },
-      });
-
-      if (esp32) {
-        await prisma.esp32.update({
-          where: { id: esp32.id },
-          data: {
-            online: true,
-            lastSeen: new Date(),
-          },
-        });
-      }
-    } catch (err) {
-      console.warn("[mqtt/publish] Could not touch esp32 lastSeen:", err);
+    const esp32 = await prisma.esp32.findFirst({
+      where: {
+        id: String(esp32Id),
+        ...(session.user.role === "ADMIN"
+          ? {}
+          : { machine: { clientId: session.user.id } }),
+      },
+    });
+    if (!esp32) {
+      return NextResponse.json({ error: "ESP32 not found" }, { status: 404 });
     }
 
-    // Call external MQTT broker endpoint
-    const mqttRes = await fetch("https://apimqtt.adapterco.com.br/publish", {
+    const commandSecret = decryptSecret(esp32.commandSecret);
+    if (!commandSecret) {
+      return NextResponse.json({ error: "Device is not provisioned" }, { status: 409 });
+    }
+
+    const paymentId = `manual-${crypto.randomUUID()}`;
+    const amount = action === "credit_test" ? "1.00" : "0.00";
+    const message = JSON.stringify({
+      action,
+      amount: Number(amount),
+      paymentId,
+      signature: signCommand(commandSecret, action, amount, paymentId),
+    });
+
+    const mqttApiToken = process.env.MQTT_API_TOKEN;
+    if (!mqttApiToken) {
+      return NextResponse.json({ error: "MQTT gateway is not configured" }, { status: 503 });
+    }
+
+    const mqttRes = await fetch(process.env.MQTT_API_URL || "https://apimqtt.adapterco.com.br/publish", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, message }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${mqttApiToken}`,
+      },
+      body: JSON.stringify({ topic: esp32.mqttTopic, message }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const data = await mqttRes.json().catch(() => ({}));

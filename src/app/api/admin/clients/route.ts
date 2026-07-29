@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
-async function requireAdmin(req: NextRequest) {
+async function requireAdmin() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return null;
   if (session.user.role !== "ADMIN") return null;
@@ -12,8 +12,8 @@ async function requireAdmin(req: NextRequest) {
 }
 
 // GET /api/admin/clients - all clients with machine/esp32 counts
-export async function GET(req: NextRequest) {
-  const session = await requireAdmin(req);
+export async function GET() {
+  const session = await requireAdmin();
   if (!session) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/admin/clients - create new client
 export async function POST(req: NextRequest) {
-  const session = await requireAdmin(req);
+  const session = await requireAdmin();
   if (!session) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

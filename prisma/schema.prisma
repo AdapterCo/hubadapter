@@ -10,27 +10,35 @@ datasource db {
 }
 
 model Device {
-  id        String   @id @default(cuid())
-  idmaq     String   @unique
-  claimed   Boolean  @default(false)
-  clientId  String?
-  client    Client?  @relation(fields: [clientId], references: [id])
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  idmaq         String   @unique
+  claimed       Boolean  @default(false)
+  clientId      String?
+  apiKeyHash    String?
+  commandSecret String?
+  client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  @@index([clientId])
 }
 
 model Client {
-  id            String    @id @default(cuid())
-  name          String
-  email         String    @unique
-  passwordHash  String
-  mpAccessToken String?
-  webhookToken  String    @unique @default(cuid())
-  role          String    @default("CLIENT")
-  active        Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  devices       Device[]
-  machines      Machine[]
-  payments      Payment[]
+  id               String         @id @default(cuid())
+  name             String
+  email            String         @unique
+  passwordHash     String
+  mpAccessToken    String?
+  mpWebhookSecret  String?
+  mpTokenValid     Boolean?
+  mpTokenCheckedAt DateTime?
+  webhookToken     String         @unique @default(cuid())
+  role             String         @default("CLIENT")
+  active           Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  devices          Device[]
+  machines         Machine[]
+  payments         Payment[]
+  webhookIssues    WebhookIssue[]
 }
 
 model Machine {
@@ -41,22 +49,30 @@ model Machine {
   client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   esps      Esp32[]
   createdAt DateTime @default(now())
+
+  @@index([clientId])
 }
 
 model Esp32 {
-  id           String    @id @default(cuid())
-  machineId    String
-  serialNumber String    @unique
-  mqttTopic    String    @unique
-  online       Boolean   @default(false)
-  lastSeen     DateTime?
-  credits      Float     @default(0)
-  mpPosId      String?
-  mpPosName    String?
-  machine      Machine   @relation(fields: [machineId], references: [id], onDelete: Cascade)
-  payments     Payment[]
-  events       TelemetryEvent[]
-  createdAt    DateTime  @default(now())
+  id            String           @id @default(cuid())
+  machineId     String
+  serialNumber  String           @unique
+  mqttTopic     String           @unique
+  online        Boolean          @default(false)
+  lastSeen      DateTime?
+  credits       Decimal          @default(0) @db.Decimal(12, 2)
+  mpPosId       String?
+  mpPosName     String?
+  apiKeyHash    String?
+  commandSecret String?
+  machine       Machine          @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  payments      Payment[]
+  events        TelemetryEvent[]
+  createdAt     DateTime         @default(now())
+
+  @@index([machineId])
+  @@index([mpPosId])
+  @@index([lastSeen])
 }
 
 model Payment {
@@ -64,12 +80,16 @@ model Payment {
   clientId    String
   esp32Id     String
   mpPaymentId String   @unique
-  amount      Float
+  amount      Decimal  @db.Decimal(12, 2)
   status      String
   externalRef String?
   createdAt   DateTime @default(now())
-  client      Client   @relation(fields: [clientId], references: [id])
-  esp32       Esp32    @relation(fields: [esp32Id], references: [id])
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  esp32       Esp32    @relation(fields: [esp32Id], references: [id], onDelete: Cascade)
+
+  @@index([clientId, createdAt])
+  @@index([clientId, status, createdAt])
+  @@index([esp32Id, createdAt])
 }
 
 model TelemetryEvent {
@@ -79,4 +99,38 @@ model TelemetryEvent {
   payload   String
   esp32     Esp32    @relation(fields: [esp32Id], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+
+  @@index([esp32Id, createdAt])
+  @@index([createdAt])
+}
+
+model OutboxMessage {
+  id          String    @id @default(cuid())
+  paymentId   String    @unique
+  esp32Id     String
+  topic       String
+  payload     String
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  nextAttempt DateTime  @default(now())
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  sentAt      DateTime?
+
+  @@index([status, nextAttempt])
+}
+
+model WebhookIssue {
+  id                String   @id @default(cuid())
+  clientId          String
+  paymentId         String
+  reason            String
+  posId             String?
+  externalReference String?
+  resolved          Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  client            Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([resolved, createdAt])
+  @@index([clientId, createdAt])
 }

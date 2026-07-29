@@ -2,12 +2,13 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
+import TelemetryLiveStatus from '@/components/TelemetryLiveStatus'
 
 export default async function AdminTelemetriaPage() {
   const session = await getServerSession(authOptions)
   if (!session || session.user.role !== 'ADMIN') redirect('/login')
 
-  const [esps, events] = await Promise.all([
+  const [esps, events, webhookIssues] = await Promise.all([
     prisma.esp32.findMany({
       include: {
         machine: { include: { client: { select: { name: true } } } },
@@ -23,9 +24,18 @@ export default async function AdminTelemetriaPage() {
         },
       },
     }),
+    prisma.webhookIssue.findMany({
+      where: { resolved: false },
+      take: 20,
+      orderBy: { createdAt: 'desc' },
+      include: { client: { select: { name: true } } },
+    }),
   ])
 
-  const onlineCount = esps.filter(e => e.online).length
+  const onlineCutoff = Date.now() - 10 * 60 * 1000
+  const isOnline = (lastSeen: Date | null) =>
+    Boolean(lastSeen && new Date(lastSeen).getTime() >= onlineCutoff)
+  const onlineCount = esps.filter(e => isOnline(e.lastSeen)).length
 
   return (
     <div className="page-content">
@@ -34,10 +44,22 @@ export default async function AdminTelemetriaPage() {
           <h1>Telemetria Global</h1>
           <p>Monitoramento em tempo real dos dispositivos ESP32 ({onlineCount}/{esps.length} online)</p>
         </div>
-        <span className="telemetry-badge live">
-          <span className="live-dot" /> Ao vivo (SSE Activo)
-        </span>
+        <TelemetryLiveStatus />
       </div>
+
+      {webhookIssues.length > 0 && (
+        <div className="alert alert-warning" style={{ marginBottom: '24px' }}>
+          <div>
+            <strong>Pagamentos aguardando associação</strong>
+            {webhookIssues.map(issue => (
+              <div key={issue.id} style={{ marginTop: '6px' }}>
+                Cliente {issue.client.name}, pagamento #{issue.paymentId}
+                {issue.posId ? `, POS ${issue.posId}` : ''}.
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="section-title">📡 Status dos ESP32s</div>
       <div className="card" style={{ marginBottom: '28px' }}>
@@ -67,7 +89,7 @@ export default async function AdminTelemetriaPage() {
                     <td>{e.machine.client.name}</td>
                     <td>{e.machine.name}</td>
                     <td>
-                      {e.online ? (
+                      {isOnline(e.lastSeen) ? (
                         <span className="badge online"><span className="pulse" /> Online</span>
                       ) : (
                         <span className="badge offline">Offline</span>
@@ -76,7 +98,7 @@ export default async function AdminTelemetriaPage() {
                     <td style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--accent-light)' }}>
                       {e.mqttTopic}
                     </td>
-                    <td className="strong">{e.credits.toFixed(2)}</td>
+                    <td className="strong">{Number(e.credits).toFixed(2)}</td>
                     <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                       {e.lastSeen ? new Date(e.lastSeen).toLocaleString('pt-BR') : 'Nunca'}
                     </td>

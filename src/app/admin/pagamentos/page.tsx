@@ -22,7 +22,7 @@ export default async function AdminPagamentosPage() {
 
   const totalAmount = payments
     .filter(p => p.status === 'approved')
-    .reduce((sum, p) => sum + p.amount, 0)
+    .reduce((sum, p) => sum + Number(p.amount), 0)
 
   return (
     <div className="page-content">
@@ -62,7 +62,7 @@ export default async function AdminPagamentosPage() {
                     <td className="strong">{p.client.name} ({p.client.email})</td>
                     <td style={{ fontFamily: 'monospace' }}>{p.esp32.serialNumber}</td>
                     <td style={{ fontSize: '12px' }}>{p.esp32.mpPosName || '—'}</td>
-                    <td className="strong">{fmt(p.amount)}</td>
+                    <td className="strong">{fmt(Number(p.amount))}</td>
                     <td>
                       <span className={`badge ${p.status}`}>
                         {p.status === 'approved' ? '✅ Aprovado' : p.status === 'pending' ? '⏳ Pendente' : '❌ Rejeitado'}

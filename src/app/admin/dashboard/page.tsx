@@ -6,12 +6,21 @@ async function getStats() {
   const [totalClients, totalDevices, onlineDevices, paymentsToday, revenueResult, recentPayments] = await Promise.all([
     prisma.client.count({ where: { role: 'CLIENT' } }),
     prisma.esp32.count(),
-    prisma.esp32.count({ where: { online: true } }),
+    prisma.esp32.count({
+      where: { lastSeen: { gte: new Date(Date.now() - 10 * 60 * 1000) } },
+    }),
     prisma.payment.count({ where: { createdAt: { gte: today }, status: 'approved' } }),
     prisma.payment.aggregate({ where: { createdAt: { gte: today }, status: 'approved' }, _sum: { amount: true } }),
     prisma.payment.findMany({ take: 10, orderBy: { createdAt: 'desc' }, include: { client: { select: { name: true } }, esp32: { select: { serialNumber: true } } } }),
   ])
-  return { totalClients, totalDevices, onlineDevices, paymentsToday, revenueToday: revenueResult._sum.amount ?? 0, recentPayments }
+  return {
+    totalClients,
+    totalDevices,
+    onlineDevices,
+    paymentsToday,
+    revenueToday: Number(revenueResult._sum.amount ?? 0),
+    recentPayments,
+  }
 }
 
 function fmt(val: number) { return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
@@ -60,7 +69,7 @@ export default async function AdminDashboard() {
                   <tr key={p.id}>
                     <td className="strong">{p.client.name}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{p.esp32.serialNumber}</td>
-                    <td className="strong">{fmt(p.amount)}</td>
+                    <td className="strong">{fmt(Number(p.amount))}</td>
                     <td><span className={`badge ${p.status}`}>{p.status === 'approved' ? 'Aprovado' : p.status === 'pending' ? 'Pendente' : 'Rejeitado'}</span></td>
                     <td style={{ color: 'var(--text-muted)' }}>{timeAgo(p.createdAt)}</td>
                   </tr>

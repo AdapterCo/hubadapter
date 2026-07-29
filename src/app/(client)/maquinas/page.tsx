@@ -90,13 +90,13 @@ export default function MaquinasPage() {
     load()
   }
 
-  async function sendMqtt(topic: string, message: string) {
+  async function sendMqtt(esp32Id: string, action: 'ping' | 'credit_test') {
     await fetch('/api/mqtt/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, message }),
+      body: JSON.stringify({ esp32Id, action }),
     })
-    alert(`Comando enviado para ${topic}`)
+    alert('Comando enviado')
   }
 
   return (
@@ -162,7 +162,7 @@ export default function MaquinasPage() {
                               <button
                                 className="btn btn-secondary btn-sm"
                                 title="Enviar ping"
-                                onClick={() => sendMqtt(e.mqttTopic, JSON.stringify({ action: 'ping' }))}
+                                onClick={() => sendMqtt(e.id, 'ping')}
                               >
                                 📡 Ping
                               </button>

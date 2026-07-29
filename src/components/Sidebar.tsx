@@ -13,7 +13,6 @@ interface NavItem {
 interface SidebarProps {
   role: string
   userName: string
-  userEmail: string
 }
 
 const adminNav: NavItem[] = [
@@ -31,7 +30,7 @@ const clientNav: NavItem[] = [
   { href: '/configuracoes', icon: '⚙️', label: 'Configurações' },
 ]
 
-export default function Sidebar({ role, userName, userEmail }: SidebarProps) {
+export default function Sidebar({ role, userName }: SidebarProps) {
   const pathname = usePathname()
   const navItems = role === 'ADMIN' ? adminNav : clientNav
 

@@ -10,7 +10,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <div className="layout-wrapper">
-      <Sidebar role={session.user.role} userName={session.user.name} userEmail={session.user.email} />
+      <Sidebar role={session.user.role} userName={session.user.name} />
       <main className="main-content">
         {children}
       </main>

@@ -5,26 +5,39 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "start": "next start",
     "db:push": "prisma db push",
     "db:seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts",
+    "db:encrypt-secrets": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/encrypt-existing-secrets.ts",
+    "db:cleanup": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/cleanup.ts",
     "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@prisma/client": "^5.16.0",
     "bcryptjs": "^3.0.3",
-    "next": "^14.2.35",
+    "next": "^16.2.12",
     "next-auth": "^4.24.15",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@prisma/client": "^5.16.0",
     "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^26.1.2",
+    "@types/node": "^20.19.43",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.12",
     "prisma": "^5.16.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "postcss": "8.5.24",
+    "sharp": "0.35.3"
   }
 }

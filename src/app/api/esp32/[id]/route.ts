@@ -6,8 +6,9 @@ import prisma from "@/lib/prisma";
 // GET /api/esp32/[id] - get esp32 with recent payments
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const session = await getServerSession(authOptions);
 
@@ -17,13 +18,30 @@ export async function GET(
 
     const esp32 = await prisma.esp32.findFirst({
       where: {
-        id: params.id,
+        id,
         machine: { clientId: session.user.id },
       },
-      include: {
+      select: {
+        id: true,
+        serialNumber: true,
+        mqttTopic: true,
+        online: true,
+        lastSeen: true,
+        credits: true,
+        mpPosId: true,
+        mpPosName: true,
+        createdAt: true,
         payments: {
           orderBy: { id: "desc" },
           take: 20,
+          select: {
+            id: true,
+            mpPaymentId: true,
+            amount: true,
+            status: true,
+            externalRef: true,
+            createdAt: true,
+          },
         },
       },
     });
@@ -32,7 +50,14 @@ export async function GET(
       return NextResponse.json({ error: "Esp32 not found" }, { status: 404 });
     }
 
-    return NextResponse.json(esp32);
+    return NextResponse.json({
+      ...esp32,
+      credits: Number(esp32.credits),
+      payments: esp32.payments.map((payment) => ({
+        ...payment,
+        amount: Number(payment.amount),
+      })),
+    });
   } catch (error) {
     console.error("[esp32/[id] GET]", error);
     return NextResponse.json(
@@ -45,8 +70,9 @@ export async function GET(
 // PATCH /api/esp32/[id] - update online status / lastSeen
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const session = await getServerSession(authOptions);
 
@@ -56,7 +82,7 @@ export async function PATCH(
 
     const esp32 = await prisma.esp32.findFirst({
       where: {
-        id: params.id,
+        id,
         machine: { clientId: session.user.id },
       },
     });
@@ -73,11 +99,22 @@ export async function PATCH(
     if (lastSeen !== undefined) updateData.lastSeen = new Date(lastSeen);
 
     const updated = await prisma.esp32.update({
-      where: { id: params.id },
+      where: { id },
       data: updateData,
+      select: {
+        id: true,
+        serialNumber: true,
+        mqttTopic: true,
+        online: true,
+        lastSeen: true,
+        credits: true,
+        mpPosId: true,
+        mpPosName: true,
+        createdAt: true,
+      },
     });
 
-    return NextResponse.json(updated);
+    return NextResponse.json({ ...updated, credits: Number(updated.credits) });
   } catch (error) {
     console.error("[esp32/[id] PATCH]", error);
     return NextResponse.json(
@@ -90,8 +127,9 @@ export async function PATCH(
 // DELETE /api/esp32/[id] - delete esp32
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const session = await getServerSession(authOptions);
 
@@ -101,7 +139,7 @@ export async function DELETE(
 
     const esp32 = await prisma.esp32.findFirst({
       where: {
-        id: params.id,
+        id,
         machine: { clientId: session.user.id },
       },
     });
@@ -110,7 +148,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Esp32 not found" }, { status: 404 });
     }
 
-    await prisma.esp32.delete({ where: { id: params.id } });
+    await prisma.esp32.delete({ where: { id } });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

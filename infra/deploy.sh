@@ -23,8 +23,5 @@ fi
 echo "📦 Compilando imagens e subindo containers com Docker Compose..."
 docker compose -f infra/docker-compose.yml --env-file .env up -d --build
 
-echo "⚡ Rodando o seed inicial do banco (Admin + IDMAQs)..."
-docker exec -i adapterhub-web node prisma/seed.js || true
-
 echo "✅ Deploy concluído com sucesso!"
 echo "🌐 Acesse: https://hub.adapterco.com.br"

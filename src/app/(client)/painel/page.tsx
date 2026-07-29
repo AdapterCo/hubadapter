@@ -2,24 +2,48 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 
 async function getClientData(clientId: string) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
-  const [machines, paymentsToday, revenueResult, onlineDevices] = await Promise.all([
+  const [machines, paymentsToday, revenueResult, onlineDevices, clientSettings] = await Promise.all([
     prisma.machine.findMany({
       where: { clientId },
       include: {
-        esps: { select: { id: true, online: true, credits: true, serialNumber: true } },
+        esps: { select: { id: true, lastSeen: true, credits: true, serialNumber: true } },
       },
     }),
     prisma.payment.count({ where: { clientId, createdAt: { gte: today }, status: 'approved' } }),
     prisma.payment.aggregate({ where: { clientId, status: 'approved' }, _sum: { amount: true } }),
-    prisma.esp32.count({ where: { machine: { clientId }, online: true } }),
+    prisma.esp32.count({
+      where: {
+        machine: { clientId },
+        lastSeen: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+      },
+    }),
+    prisma.client.findUnique({
+      where: { id: clientId },
+      select: {
+        mpAccessToken: true,
+        mpWebhookSecret: true,
+        mpTokenValid: true,
+        mpTokenCheckedAt: true,
+      },
+    }),
   ])
 
-  return { machines, paymentsToday, totalRevenue: revenueResult._sum.amount ?? 0, onlineDevices }
+  return {
+    machines,
+    paymentsToday,
+    totalRevenue: Number(revenueResult._sum.amount ?? 0),
+    onlineDevices,
+    mercadoPagoConfigured: Boolean(
+      clientSettings?.mpAccessToken && clientSettings.mpWebhookSecret
+    ),
+    mercadoPagoTokenInvalid: clientSettings?.mpTokenValid === false,
+  }
 }
 
 function fmt(val: number) { return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
@@ -40,6 +64,28 @@ export default async function PainelPage() {
         </div>
         <span className="telemetry-badge live"><span className="live-dot" /> Ao vivo</span>
       </div>
+
+      {!data.mercadoPagoConfigured && (
+        <div className="alert alert-warning" style={{ marginBottom: '20px' }}>
+          <span>⚠️</span>
+          <div>
+            Configure o Access Token e a assinatura secreta do webhook do Mercado Pago para
+            validar pagamentos com segurança.{' '}
+            <Link href="/configuracoes">Abrir configurações</Link>
+          </div>
+        </div>
+      )}
+
+      {data.mercadoPagoTokenInvalid && (
+        <div className="alert alert-error" style={{ marginBottom: '20px' }}>
+          <span>⚠️</span>
+          <div>
+            O Mercado Pago rejeitou o Access Token configurado. Atualize a credencial para
+            que os pagamentos voltem a ser processados.{' '}
+            <Link href="/configuracoes">Atualizar credencial</Link>
+          </div>
+        </div>
+      )}
 
       <div className="stats-grid">
         <div className="stat-card">
@@ -70,15 +116,17 @@ export default async function PainelPage() {
         <div className="empty-state">
           <div className="empty-icon">🖥️</div>
           <p>Você ainda não tem máquinas cadastradas.</p>
-          <a href="/maquinas" className="btn btn-primary">Cadastrar primeira máquina</a>
+          <Link href="/maquinas" className="btn btn-primary">Cadastrar primeira máquina</Link>
         </div>
       ) : (
         <div className="grid-2">
           {data.machines.map(m => {
-            const onlineEsps = m.esps.filter(e => e.online).length
-            const totalCredits = m.esps.reduce((acc, e) => acc + e.credits, 0)
+            const onlineEsps = m.esps.filter(
+              e => e.lastSeen && Date.now() - new Date(e.lastSeen).getTime() < 10 * 60 * 1000
+            ).length
+            const totalCredits = m.esps.reduce((acc, e) => acc + Number(e.credits), 0)
             return (
-              <a key={m.id} href={`/maquinas/${m.id}`} style={{ textDecoration: 'none' }}>
+              <Link key={m.id} href={`/maquinas/${m.id}`} style={{ textDecoration: 'none' }}>
                 <div className="card" style={{ cursor: 'pointer' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                     <div>
@@ -102,7 +150,7 @@ export default async function PainelPage() {
                     </div>
                   </div>
                 </div>
-              </a>
+              </Link>
             )
           })}
         </div>

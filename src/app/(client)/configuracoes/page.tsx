@@ -3,8 +3,13 @@
 import { useState, useEffect } from 'react'
 
 export default function ConfiguracoesPage() {
-  const [settings, setSettings] = useState<{ mpAccessToken: string; webhookToken: string } | null>(null)
+  const [settings, setSettings] = useState<{
+    mpAccessToken: string
+    mpWebhookSecret: string
+    webhookToken: string
+  } | null>(null)
   const [mpToken, setMpToken] = useState('')
+  const [webhookSecret, setWebhookSecret] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -14,6 +19,7 @@ export default function ConfiguracoesPage() {
     fetch('/api/client/settings').then(r => r.json()).then(d => {
       setSettings(d)
       setMpToken(d.mpAccessToken || '')
+      setWebhookSecret(d.mpWebhookSecret || '')
       setLoading(false)
     })
   }, [])
@@ -32,7 +38,10 @@ export default function ConfiguracoesPage() {
     await fetch('/api/client/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mpAccessToken: mpToken }),
+      body: JSON.stringify({
+        mpAccessToken: mpToken,
+        mpWebhookSecret: webhookSecret,
+      }),
     })
     setSaving(false)
     setSaved(true)
@@ -91,6 +100,21 @@ export default function ConfiguracoesPage() {
               style={{ fontFamily: 'monospace' }}
             />
             <span className="form-hint">O token é armazenado de forma segura no servidor e nunca é exibido completo</span>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Assinatura secreta do webhook</label>
+            <input
+              id="mp-webhook-secret"
+              type="password"
+              className="form-input"
+              placeholder="Assinatura secreta exibida pelo Mercado Pago"
+              value={webhookSecret}
+              onChange={e => setWebhookSecret(e.target.value)}
+              style={{ fontFamily: 'monospace' }}
+            />
+            <span className="form-hint">
+              Usada para validar o cabeçalho x-signature de cada notificação.
+            </span>
           </div>
           <button id="btn-save-token" type="submit" className="btn btn-primary" disabled={saving}>
             {saving ? <span className="loading-spinner" /> : '💾'} Salvar Token

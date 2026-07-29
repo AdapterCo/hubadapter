@@ -1,16 +1,36 @@
 import { NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
+import { checkRateLimit, getRequestIp } from '@/lib/rate-limit'
+import { z } from 'zod'
+
+const registerSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  email: z.email().max(254).transform((value) => value.trim().toLowerCase()),
+  password: z.string().min(8).max(128),
+  idmaq: z.string().trim().min(1).max(64).transform((value) => value.toUpperCase()),
+}).strict()
 
 export async function POST(req: Request) {
   try {
-    const { name, email, password, idmaq } = await req.json()
-
-    if (!name || !email || !password || !idmaq) {
-      return NextResponse.json({ error: 'Todos os campos são obrigatórios.' }, { status: 400 })
+    const rateLimit = checkRateLimit(`register:${getRequestIp(req)}`, 5, 15 * 60 * 1000)
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Muitas tentativas. Tente novamente mais tarde.' },
+        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } }
+      )
     }
 
-    const cleanIdmaq = idmaq.trim().toUpperCase()
+    const contentLength = Number(req.headers.get('content-length') || 0)
+    if (contentLength > 16 * 1024) {
+      return NextResponse.json({ error: 'Payload muito grande.' }, { status: 413 })
+    }
+
+    const parsed = registerSchema.safeParse(await req.json().catch(() => null))
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Dados de cadastro inválidos.' }, { status: 400 })
+    }
+    const { name: cleanName, email: cleanEmail, password, idmaq: cleanIdmaq } = parsed.data
 
     // Validate idmaq - must exist and not be claimed
     const device = await prisma.device.findUnique({ where: { idmaq: cleanIdmaq } })
@@ -24,7 +44,7 @@ export async function POST(req: Request) {
     }
 
     // Check if email already exists
-    const existingUser = await prisma.client.findUnique({ where: { email } })
+    const existingUser = await prisma.client.findUnique({ where: { email: cleanEmail } })
     if (existingUser) {
       return NextResponse.json({ error: 'Este email já está cadastrado.' }, { status: 400 })
     }
@@ -34,7 +54,7 @@ export async function POST(req: Request) {
     // Create client, claim device, and auto-create machine + ESP32 in transaction
     const client = await prisma.$transaction(async (tx) => {
       const newClient = await tx.client.create({
-        data: { name, email, passwordHash, role: 'CLIENT' },
+        data: { name: cleanName, email: cleanEmail, passwordHash, role: 'CLIENT' },
       })
 
       // Claim the device
@@ -53,13 +73,15 @@ export async function POST(req: Request) {
       })
 
       // Auto-create the ESP32 representing this idmaq, using cleanIdmaq as topic
-      const esp32 = await tx.esp32.create({
+      await tx.esp32.create({
         data: {
           machineId: machine.id,
           serialNumber: cleanIdmaq,
           mqttTopic: cleanIdmaq,
           online: false,
           credits: 0,
+          apiKeyHash: device.apiKeyHash,
+          commandSecret: device.commandSecret,
         },
       })
 
