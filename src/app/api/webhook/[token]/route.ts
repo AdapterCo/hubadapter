@@ -18,6 +18,10 @@ interface MercadoPagoPayment {
   store_id?: string | number
   collector_id?: number
   point_of_interaction?: {
+    device?: {
+      serial_number?: string
+      model?: string
+    }
     transaction_data?: {
       pos_id?: string | number
     }
@@ -74,7 +78,7 @@ async function handleNotification(
 
     const rawPaymentId = extractPaymentId(req, body)
     if (!rawPaymentId) {
-      return NextResponse.json({ ok: true, message: 'No payment ID found in notification' }, { status: 200 })
+      return NextResponse.json({ ok: true, message: 'No payment ID found' }, { status: 200 })
     }
 
     // 1. Anti-Replay Protection: Check if this paymentId was already processed
@@ -161,14 +165,32 @@ async function handleNotification(
       payment.store_id ||
       ''
     ).trim()
+    const deviceSerial = String(
+      payment.point_of_interaction?.device?.serial_number || ''
+    ).trim()
 
-    // 6. Match Payment to ESP32 device
+    // 6. Match Payment to ESP32 device using 4 lookup strategies:
+    // Strategy A: Match by posId (e.g. "135916764") in mpPosId or mpPosName
     let esp32 = posId
       ? await prisma.esp32.findFirst({
-          where: { mpPosId: posId, machine: { clientId: client.id } },
+          where: {
+            machine: { clientId: client.id },
+            OR: [{ mpPosId: posId }, { mpPosName: posId }],
+          },
         })
       : null
 
+    // Strategy B: Match by device serial_number (e.g. "Q92-1733238464") from point_of_interaction.device
+    if (!esp32 && deviceSerial) {
+      esp32 = await prisma.esp32.findFirst({
+        where: {
+          machine: { clientId: client.id },
+          OR: [{ mpPosId: deviceSerial }, { mpPosName: deviceSerial }],
+        },
+      })
+    }
+
+    // Strategy C: Match by externalReference (e.g. "ADP-001" or "esp32:cuid")
     if (!esp32 && externalReference) {
       const espMatch = externalReference.match(/^esp32:(.+)$/i)
       if (espMatch) {
@@ -185,7 +207,7 @@ async function handleNotification(
       })
     }
 
-    // Fallback: If client has exactly 1 ESP32 registered, associate direct Point machine sales to it
+    // Strategy D: Fallback for 1-ESP32 Clients (If client has only 1 ESP32, credit it!)
     if (!esp32) {
       const clientEsps = await prisma.esp32.findMany({
         where: { machine: { clientId: client.id } },
@@ -201,8 +223,8 @@ async function handleNotification(
         data: {
           clientId: client.id,
           paymentId: mpPaymentId,
-          reason: 'Pagamento aprovado no Mercado Pago sem dispositivo ESP32 associado',
-          posId: posId || null,
+          reason: `Pagamento aprovado sem ESP32 associado (POS: ${posId || 'N/A'}, Serial MP: ${deviceSerial || 'N/A'})`,
+          posId: posId || deviceSerial || null,
           externalReference: externalReference || null,
         },
       })
@@ -210,6 +232,7 @@ async function handleNotification(
         paymentId: mpPaymentId,
         clientId: client.id,
         posId,
+        deviceSerial,
         externalReference,
       })
       return NextResponse.json({ error: 'Payment device not found' }, { status: 422 })
@@ -240,7 +263,7 @@ async function handleNotification(
           mpPaymentId,
           amount,
           status: 'approved',
-          externalRef: externalReference || posId || 'direct-pos',
+          externalRef: externalReference || posId || deviceSerial || 'direct-pos',
         },
       })
 
@@ -269,7 +292,7 @@ async function handleNotification(
             mpPaymentId,
             status: payment.status,
             amount: Number(amountText),
-            posId,
+            posId: posId || deviceSerial,
             idmaq: esp32.serialNumber,
           }),
         },
