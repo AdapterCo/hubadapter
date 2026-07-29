@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
 interface MercadoPagoPayment {
-  id: number
+  id: number | string
   status: string
   transaction_amount: number
   external_reference?: string
@@ -31,12 +31,16 @@ export async function POST(
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
-    const body = await req.json()
+    const body = await req.json().catch(() => ({}))
 
-    // 2. Get payment ID from body
-    const paymentId: string | number = body?.data?.id ?? body?.resource ?? body?.id
+    // 2. Extract numerical payment ID cleanly from body
+    let rawPaymentId = body?.data?.id || body?.id || body?.resource || ''
+    if (typeof rawPaymentId === 'string' && rawPaymentId.includes('/')) {
+      const parts = rawPaymentId.split('/')
+      rawPaymentId = parts[parts.length - 1]
+    }
 
-    if (!paymentId) {
+    if (!rawPaymentId) {
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
@@ -44,7 +48,7 @@ export async function POST(
     let payment: MercadoPagoPayment | null = null
     if (client.mpAccessToken) {
       try {
-        const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+        const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${rawPaymentId}`, {
           headers: {
             Authorization: `Bearer ${client.mpAccessToken.trim()}`,
             'Content-Type': 'application/json',
@@ -53,6 +57,8 @@ export async function POST(
 
         if (mpRes.ok) {
           payment = await mpRes.json()
+        } else {
+          console.warn('[webhook] MP fetch failed:', mpRes.status, await mpRes.text())
         }
       } catch (err) {
         console.error('[webhook] MP fetch error:', err)
@@ -78,26 +84,28 @@ export async function POST(
     // 4. Find matching ESP32 for this client
     let esp32 = null
 
-    // Match strategy A: external_reference = "esp32:{id}"
-    const espMatch = externalReference.match(/^esp32:(.+)$/i)
-    if (espMatch) {
-      esp32 = await prisma.esp32.findFirst({
-        where: { id: espMatch[1], machine: { clientId: client.id } },
-      })
-    }
-
-    // Match strategy B: external_reference = "idmaq:{serial}" or serialNumber directly
-    if (!esp32 && externalReference) {
-      const serialClean = externalReference.replace(/^idmaq:/i, '').trim()
-      esp32 = await prisma.esp32.findFirst({
-        where: { serialNumber: serialClean, machine: { clientId: client.id } },
-      })
-    }
-
-    // Match strategy C: match by Mercado Pago POS ID (mpPosId)
-    if (!esp32 && posId) {
+    // Match strategy A: match by Mercado Pago POS ID (mpPosId)
+    if (posId) {
       esp32 = await prisma.esp32.findFirst({
         where: { mpPosId: posId, machine: { clientId: client.id } },
+      })
+    }
+
+    // Match strategy B: external_reference = "esp32:{id}"
+    if (!esp32 && externalReference) {
+      const espMatch = externalReference.match(/^esp32:(.+)$/i)
+      if (espMatch) {
+        esp32 = await prisma.esp32.findFirst({
+          where: { id: espMatch[1], machine: { clientId: client.id } },
+        })
+      }
+    }
+
+    // Match strategy C: external_reference = "idmaq:{serial}" or serialNumber directly
+    if (!esp32 && externalReference) {
+      const serialClean = externalReference.replace(/^idmaq:/i, '').trim().toUpperCase()
+      esp32 = await prisma.esp32.findFirst({
+        where: { serialNumber: serialClean, machine: { clientId: client.id } },
       })
     }
 
@@ -116,9 +124,11 @@ export async function POST(
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
+    const isApproved = String(payment.status).toLowerCase() === 'approved'
+
     // 5. If payment is approved, credit ESP32 & publish MQTT
-    if (payment.status === 'approved') {
-      const mpPayIdStr = String(payment.id || paymentId)
+    if (isApproved) {
+      const mpPayIdStr = String(payment.id || rawPaymentId)
 
       // Prevent duplicate payment processing
       const existingPay = await prisma.payment.findUnique({ where: { mpPaymentId: mpPayIdStr } })
@@ -129,15 +139,19 @@ export async function POST(
             esp32Id: esp32.id,
             mpPaymentId: mpPayIdStr,
             amount: payment.transaction_amount || 0,
-            status: payment.status,
+            status: 'approved',
             externalRef: externalReference || posId,
           },
         })
 
-        // Increment ESP32 credit
+        // Increment ESP32 credit and touch lastSeen / online
         await prisma.esp32.update({
           where: { id: esp32.id },
-          data: { credits: { increment: payment.transaction_amount || 0 } },
+          data: {
+            credits: { increment: payment.transaction_amount || 0 },
+            online: true,
+            lastSeen: new Date(),
+          },
         })
 
         // Publish to MQTT to release credit on physical machine
@@ -161,16 +175,17 @@ export async function POST(
       }
     }
 
-    // 6. Log TelemetryEvent
+    // 6. Log TelemetryEvent for real-time telemetry screen
     await prisma.telemetryEvent.create({
       data: {
         esp32Id: esp32.id,
         type: 'payment',
         payload: JSON.stringify({
-          mpPaymentId: payment.id || paymentId,
+          mpPaymentId: payment.id || rawPaymentId,
           status: payment.status,
           amount: payment.transaction_amount,
           posId,
+          idmaq: esp32.serialNumber,
         }),
       },
     })

@@ -3,10 +3,9 @@
   AdapterHub — Código do Firmware ESP32
   =============================================================================
   Descrição:
-    Este firmware conecta o ESP32 ao Wi-Fi e ao servidor MQTT da AdapterCo.
+    Este firmware conecta o ESP32 ao Wi-Fi, reporta o heartbeat para o servidor
+    hub.adapterco.com.br e conecta ao MQTT para receber liberação de créditos.
     Ele escuta no tópico configurado como o seu IDMAQ (ex: ADP-001).
-    Ao receber a notificação de pagamento aprovado do Mercado Pago, aciona
-    o relé/pino de pulso para liberar os créditos na máquina física.
 
   Bibliotecas necessárias (Instalar no Arduino IDE / PlatformIO):
     - PubSubClient (por Nick O'Leary)
@@ -20,6 +19,7 @@
 */
 
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 
@@ -33,8 +33,11 @@ const char* IDMAQ = "ADP-001";
 const char* WIFI_SSID     = "SUA_REDE_WIFI";
 const char* WIFI_PASSWORD = "SUA_SENHA_WIFI";
 
+// Servidor Web & Webhook do AdapterHub
+const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";
+
 // Servidor MQTT da AdapterCo
-const char* MQTT_SERVER   = "apimqtt.adapterco.com.br"; // ou IP do broker
+const char* MQTT_SERVER   = "apimqtt.adapterco.com.br";
 const int   MQTT_PORT     = 1883;
 const char* MQTT_USER     = ""; // Deixe vazio se não houver autenticação
 const char* MQTT_PASS     = "";
@@ -48,8 +51,8 @@ const int PULSE_DURATION_MS = 500;  // 0.5s ativado por pulso
 const int PULSE_INTERVAL_MS = 300;  // 0.3s intervalo entre pulsos
 
 // Modo de acionamento:
-// 1 = Um pulso por cada R$ 1,00 creditado (ex: R$ 5,00 = 5 pulsos)
-// 0 = Pulso único contínuo independente do valor
+// true  = Um pulso por cada R$ 1,00 creditado (ex: R$ 5,00 = 5 pulsos)
+// false = Pulso único contínuo independente do valor
 const bool PULSE_PER_BRL    = true;
 
 // =============================================================================
@@ -60,6 +63,34 @@ PubSubClient mqttClient(espClient);
 
 unsigned long lastHeartbeatTime = 0;
 const unsigned long HEARTBEAT_INTERVAL = 30000; // Envia heartbeat a cada 30 segundos
+
+// =============================================================================
+// FUNÇÃO DE ENVIO DE HEARTBEAT PARA O PAINEL WEB (HTTPS)
+// =============================================================================
+void sendServerHeartbeat() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = String(HUB_SERVER_URL) + "/api/esp32/heartbeat";
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+
+    StaticJsonDocument<128> doc;
+    doc["idmaq"] = IDMAQ;
+
+    String jsonBody;
+    serializeJson(doc, jsonBody);
+
+    int httpCode = http.POST(jsonBody);
+    if (httpCode > 0) {
+      Serial.print("💚 Heartbeat enviado ao servidor. HTTP Code: ");
+      Serial.println(httpCode);
+    } else {
+      Serial.print("⚠️ Erro ao enviar Heartbeat ao servidor: ");
+      Serial.println(http.errorToString(httpCode));
+    }
+    http.end();
+  }
+}
 
 // =============================================================================
 // FUNÇÃO DE LIBERAÇÃO DE CRÉDITO (RELÉ)
@@ -101,14 +132,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.println("]:");
 
-  // Converte o payload para String
   String message = "";
   for (unsigned int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
   Serial.println(message);
 
-  // Parse do JSON recebido
   StaticJsonDocument<512> doc;
   DeserializationError error = deserializeJson(doc, message);
 
@@ -121,12 +150,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   const char* action = doc["action"];
   float amount = doc["amount"] | 0.0;
 
-  // Processa a ação de crédito
   if (action && (strcmp(action, "credit") == 0 || strcmp(action, "credit_test") == 0)) {
     triggerCredit(amount > 0 ? amount : 1.0);
   } else if (action && strcmp(action, "ping") == 0) {
     Serial.println("📡 Ping recebido do servidor!");
-    // Pisca LED 3 vezes rapidamente
+    sendServerHeartbeat();
     for (int i = 0; i < 3; i++) {
       digitalWrite(LED_STATUS_PIN, HIGH);
       delay(100);
@@ -165,6 +193,9 @@ void setupWiFi() {
   Serial.println("✅ Wi-Fi Conectado!");
   Serial.print("📍 Endereço IP: ");
   Serial.println(WiFi.localIP());
+
+  // Envia heartbeat assim que conectar
+  sendServerHeartbeat();
 }
 
 // =============================================================================
@@ -184,13 +215,10 @@ void reconnectMQTT() {
 
     if (connected) {
       Serial.println(" Conectado!");
-      
-      // Inscreve-se diretamente no tópico do IDMAQ (ex: ADP-001)
       mqttClient.subscribe(IDMAQ);
       Serial.print("📥 Inscrito no tópico MQTT: ");
       Serial.println(IDMAQ);
 
-      // Envia mensagem de boas-vindas
       StaticJsonDocument<200> doc;
       doc["idmaq"] = IDMAQ;
       doc["status"] = "online";
@@ -248,10 +276,12 @@ void loop() {
 
   mqttClient.loop();
 
-  // Envia Heartbeat periódico
+  // Envia Heartbeat periódico para o servidor web e MQTT
   unsigned long now = millis();
   if (now - lastHeartbeatTime > HEARTBEAT_INTERVAL) {
     lastHeartbeatTime = now;
+
+    sendServerHeartbeat();
 
     StaticJsonDocument<128> hbDoc;
     hbDoc["idmaq"] = IDMAQ;

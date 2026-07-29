@@ -20,7 +20,23 @@ export async function GET(req: NextRequest) {
       orderBy: { name: "asc" },
     });
 
-    return NextResponse.json(machines);
+    const now = Date.now();
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+    const formattedMachines = machines.map((m) => ({
+      ...m,
+      esps: m.esps.map((e) => {
+        const isRecentlyActive = e.lastSeen
+          ? now - new Date(e.lastSeen).getTime() < TEN_MINUTES_MS
+          : false;
+        return {
+          ...e,
+          online: e.online || isRecentlyActive,
+        };
+      }),
+    }));
+
+    return NextResponse.json(formattedMachines);
   } catch (error) {
     console.error("[machines GET]", error);
     return NextResponse.json(

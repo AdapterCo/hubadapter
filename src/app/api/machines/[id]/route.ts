@@ -31,7 +31,23 @@ export async function GET(
       return NextResponse.json({ error: "Machine not found" }, { status: 404 });
     }
 
-    return NextResponse.json(machine);
+    const now = Date.now();
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+    const formattedMachine = {
+      ...machine,
+      esps: machine.esps.map((e) => {
+        const isRecentlyActive = e.lastSeen
+          ? now - new Date(e.lastSeen).getTime() < TEN_MINUTES_MS
+          : false;
+        return {
+          ...e,
+          online: e.online || isRecentlyActive,
+        };
+      }),
+    };
+
+    return NextResponse.json(formattedMachine);
   } catch (error) {
     console.error("[machines/[id] GET]", error);
     return NextResponse.json(

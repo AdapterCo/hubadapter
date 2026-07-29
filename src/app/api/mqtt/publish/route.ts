@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,6 +21,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const cleanTopic = String(topic).trim().toUpperCase();
+
+    // Touch ESP32 online status in DB if topic matches serialNumber / IDMAQ or mqttTopic
+    try {
+      const esp32 = await prisma.esp32.findFirst({
+        where: {
+          OR: [
+            { serialNumber: cleanTopic },
+            { mqttTopic: String(topic) },
+          ],
+        },
+      });
+
+      if (esp32) {
+        await prisma.esp32.update({
+          where: { id: esp32.id },
+          data: {
+            online: true,
+            lastSeen: new Date(),
+          },
+        });
+      }
+    } catch (err) {
+      console.warn("[mqtt/publish] Could not touch esp32 lastSeen:", err);
+    }
+
+    // Call external MQTT broker endpoint
     const mqttRes = await fetch("https://apimqtt.adapterco.com.br/publish", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
