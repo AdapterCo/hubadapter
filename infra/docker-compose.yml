@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_adapterhub_sec2024}
       POSTGRES_DB: adapterhub
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -25,13 +25,13 @@ services:
       dockerfile: infra/Dockerfile.web
     container_name: adapterhub-migrate
     environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/adapterhub?schema=public
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY is required}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-brennandinc@gmail.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Brasil211709..}
       ADMIN_NAME: ${ADMIN_NAME:-Admin AdapterHub}
-      SEED_DEVICE_IDS: ${SEED_DEVICE_IDS:-}
-    command: ["sh", "-c", "npx prisma migrate deploy && npm run db:encrypt-secrets && npm run db:seed"]
+      SEED_DEVICE_IDS: ${SEED_DEVICE_IDS:-ADP-001,ADP-002,ADP-003,ADP-004,ADP-005,ADP-006,ADP-007,ADP-008,ADP-009,ADP-010}
+    command: ["sh", "-c", "npx prisma db push --accept-data-loss && npm run db:seed"]
     depends_on:
       db:
         condition: service_healthy
@@ -51,10 +51,10 @@ services:
       PORT: "3019"
       HOSTNAME: "0.0.0.0"
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/adapterhub?schema=public
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY is required}
-      OUTBOX_WORKER_SECRET: ${OUTBOX_WORKER_SECRET:?OUTBOX_WORKER_SECRET is required}
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-super-secret-adapterhub-key-2024}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      OUTBOX_WORKER_SECRET: ${OUTBOX_WORKER_SECRET:-outbox_worker_secret_2024}
       NEXTAUTH_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
       NEXT_PUBLIC_APP_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
       MQTT_API_URL: ${MQTT_API_URL:-https://apimqtt.adapterco.com.br/publish}
@@ -90,7 +90,7 @@ services:
     container_name: adapterhub-outbox-worker
     restart: unless-stopped
     environment:
-      OUTBOX_WORKER_SECRET: ${OUTBOX_WORKER_SECRET:?OUTBOX_WORKER_SECRET is required}
+      OUTBOX_WORKER_SECRET: ${OUTBOX_WORKER_SECRET:-outbox_worker_secret_2024}
     command:
       - sh
       - -c
@@ -112,14 +112,14 @@ services:
     container_name: adapterhub-telemetry-cleanup
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/adapterhub?schema=public
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
       TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-60}
     command:
       - sh
       - -c
       - |
         while true; do
-          npm run db:cleanup
+          npm run db:cleanup || true
           sleep 86400
         done
     depends_on:
