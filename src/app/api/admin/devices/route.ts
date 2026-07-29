@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 async function requireAdmin(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -60,13 +60,20 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const result = await prisma.device.createMany({
-        data: idmaqs.map((idmaq) => ({ idmaq: idmaq.trim(), claimed: false })),
-        skipDuplicates: true,
-      });
+      let createdCount = 0;
+      for (const idmaq of idmaqs) {
+        try {
+          await prisma.device.create({
+            data: { idmaq: idmaq.trim(), claimed: false },
+          });
+          createdCount++;
+        } catch {
+          // Ignore duplicate entries gracefully
+        }
+      }
 
       return NextResponse.json(
-        { created: result.count, skippedDuplicates: idmaqs.length - result.count },
+        { created: createdCount, skippedDuplicates: idmaqs.length - createdCount },
         { status: 201 }
       );
     }
@@ -86,7 +93,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(device, { status: 201 });
   } catch (error: unknown) {
-    // Handle unique constraint violation
     if (
       typeof error === "object" &&
       error !== null &&

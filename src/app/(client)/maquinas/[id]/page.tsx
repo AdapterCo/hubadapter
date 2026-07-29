@@ -294,7 +294,7 @@ export default function MachineDetailPage() {
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      justify: 'space-between',
+                      justifyContent: 'space-between',
                       background: activeEsp.mpPosId === dev.id ? 'rgba(124, 58, 237, 0.15)' : 'var(--bg-secondary)',
                       border: activeEsp.mpPosId === dev.id ? '1px solid var(--accent)' : '1px solid var(--border)',
                       borderRadius: '10px',
