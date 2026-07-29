@@ -1,6 +1,24 @@
+/*
+  =============================================================================
+  AdapterHub — Código do Firmware ESP32
+  =============================================================================
+  Descrição:
+    Este firmware conecta o ESP32 ao Wi-Fi, reporta o heartbeat para o servidor
+    hub.adapterco.com.br e conecta ao MQTT para receber liberação de créditos.
+    Ele escuta no tópico configurado como o seu IDMAQ (ex: ADP-001).
+
+  Bibliotecas necessárias (Instalar no Arduino IDE / PlatformIO):
+    - PubSubClient (por Nick O'Leary)
+    - ArduinoJson (por Benoit Blanchon - versão 6.x ou 7.x)
+
+  Hardware:
+    - ESP32 Dev Module
+    - Módulo Relé 5V/3.3V (Conectado ao pino GPIO 26 ou GPIO 2)
+    - LED Status (opcional, usa LED_BUILTIN GPIO 2)
+  =============================================================================
+*/
+
 #include <WiFi.h>
-#include <WiFiManager.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -9,8 +27,12 @@
 // =============================================================================
 // CONFIGURAÇÕES DO DISPOSITIVO & REDE
 // =============================================================================
-// Código do dispositivo. Altere este valor para cada ESP32.
-const char* IDMAQ = "ADP-002";
+// Código IDMAQ impresso no dispositivo (ex: ADP-001, ADP-002...)
+const char* IDMAQ = "ADP-001";
+
+// Credenciais da rede Wi-Fi
+const char* WIFI_SSID     = "SUA_REDE_WIFI";
+const char* WIFI_PASSWORD = "SUA_SENHA_WIFI";
 
 // Servidor Web & Webhook do AdapterHub
 const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";
@@ -18,6 +40,8 @@ const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";
 // Servidor MQTT da AdapterCo
 const char* MQTT_SERVER   = "apimqtt.adapterco.com.br";
 const int   MQTT_PORT     = 1883;
+const char* MQTT_USER     = ""; // Deixe vazio se não houver autenticação
+const char* MQTT_PASS     = "";
 
 // Pino do Relé / Pulso para o mecanismo da máquina
 const int RELAY_PIN       = 26; // GPIO para acionamento do relé
@@ -33,25 +57,44 @@ const int PULSE_INTERVAL_MS = 300;  // 0.3s intervalo entre pulsos
 const bool PULSE_PER_BRL    = true;
 
 // =============================================================================
-// VARIÁVEIS GLOBAIS DE ESTADO
+// VARIÁVEIS GLOBAIS DE ESTADO & ARMAZENAMENTO IDEMPOTENTE
 // =============================================================================
-WiFiClient mqttNetworkClient;
-WiFiClientSecure httpsClient;
-PubSubClient mqttClient(mqttNetworkClient);
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 Preferences preferences;
 
 unsigned long lastHeartbeatTime = 0;
 const unsigned long HEARTBEAT_INTERVAL = 30000; // Envia heartbeat a cada 30 segundos
 
+bool wasProcessed(const String& paymentId) {
+  preferences.begin("adapterhub", true);
+  String processed = preferences.getString("processed", "");
+  preferences.end();
+  return processed.indexOf(paymentId) != -1;
+}
+
+void markProcessed(const String& paymentId) {
+  preferences.begin("adapterhub", false);
+  String processed = preferences.getString("processed", "");
+  if (processed.length() > 2000) {
+    processed = processed.substring(processed.length() - 1000);
+  }
+  if (processed.indexOf(paymentId) == -1) {
+    if (processed.length() > 0) processed += ",";
+    processed += paymentId;
+  }
+  preferences.putString("processed", processed);
+  preferences.end();
+}
+
 // =============================================================================
-// FUN��O DE ENVIO DE HEARTBEAT PARA O PAINEL WEB (HTTPS)
+// FUNÇÃO DE ENVIO DE HEARTBEAT PARA O PAINEL WEB (HTTPS)
 // =============================================================================
 void sendServerHeartbeat() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     String url = String(HUB_SERVER_URL) + "/api/heartbeat";
-    httpsClient.setInsecure();
-    http.begin(httpsClient, url);
+    http.begin(url);
     http.addHeader("Content-Type", "application/json");
 
     StaticJsonDocument<128> doc;
@@ -73,7 +116,7 @@ void sendServerHeartbeat() {
 }
 
 // =============================================================================
-// FUN��O DE LIBERA��O DE CR�DITO (REL�)
+// FUNÇÃO DE LIBERAÇÃO DE CRÉDITO (RELÉ)
 // =============================================================================
 void triggerCredit(float amount) {
   Serial.println("==========================================");
@@ -104,23 +147,6 @@ void triggerCredit(float amount) {
   Serial.println("✅ Crédito liberado com sucesso!");
 }
 
-bool wasProcessed(const String& paymentId) {
-  String processed = preferences.getString("processed", "");
-  return ("|" + processed + "|").indexOf("|" + paymentId + "|") >= 0;
-}
-
-void markProcessed(const String& paymentId) {
-  String processed = preferences.getString("processed", "");
-  processed += (processed.length() ? "|" : "") + paymentId;
-
-  while (processed.length() > 768) {
-    int separator = processed.indexOf('|');
-    if (separator < 0) break;
-    processed = processed.substring(separator + 1);
-  }
-  preferences.putString("processed", processed);
-}
-
 // =============================================================================
 // CALLBACK MQTT (Processa mensagens recebidas)
 // =============================================================================
@@ -148,22 +174,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   float amount = doc["amount"] | 0.0;
   const char* paymentIdValue = doc["paymentId"];
 
-  if (!action || !paymentIdValue) {
-    Serial.println("Comando rejeitado: action ou paymentId ausente.");
+  if (!action) {
+    Serial.println("Comando rejeitado: action ausente.");
     return;
   }
 
-  String paymentId(paymentIdValue);
-  if (wasProcessed(paymentId)) {
-    Serial.println("Comando ignorado: paymentId já processado.");
-    return;
-  }
-
-  if (action && (strcmp(action, "credit") == 0 || strcmp(action, "credit_test") == 0)) {
-    triggerCredit(amount > 0 ? amount : 1.0);
-    markProcessed(paymentId);
-  } else if (action && strcmp(action, "ping") == 0) {
-    Serial.println("📡 Ping recebido do servidor!");
+  // Se for comando de ping, responde imediatamente com heartbeat HTTP e pisca LED
+  if (strcmp(action, "ping") == 0) {
+    Serial.println("📡 Ping recebido do servidor! Confirmando presença...");
     sendServerHeartbeat();
     for (int i = 0; i < 3; i++) {
       digitalWrite(LED_STATUS_PIN, HIGH);
@@ -171,27 +189,50 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       digitalWrite(LED_STATUS_PIN, LOW);
       delay(100);
     }
+    return;
+  }
+
+  // Para créditos (reais ou teste), exige o paymentId para garantia de idempotência
+  if (!paymentIdValue) {
+    Serial.println("Comando rejeitado: paymentId ausente para instrução de crédito.");
+    return;
+  }
+
+  String paymentId(paymentIdValue);
+  if (wasProcessed(paymentId)) {
+    Serial.println("Comando ignorado: paymentId já processado anteriormente.");
+    return;
+  }
+
+  if (strcmp(action, "credit") == 0 || strcmp(action, "credit_test") == 0) {
+    triggerCredit(amount > 0 ? amount : 1.0);
+    markProcessed(paymentId);
+    sendServerHeartbeat(); // Atualiza presença no servidor após liberar crédito
   }
 }
 
 // =============================================================================
-// CONEX�O WI-FI
+// CONEXÃO WI-FI
 // =============================================================================
 void setupWiFi() {
   delay(10);
   Serial.println();
-  Serial.println("🌐 Iniciando WiFiManager...");
+  Serial.print("🌐 Conectando à rede Wi-Fi: ");
+  Serial.println(WIFI_SSID);
 
-  WiFiManager wifiManager;
-  wifiManager.setConfigPortalTimeout(180);
-  String portalName = String("AdapterHub-") + IDMAQ;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  digitalWrite(LED_STATUS_PIN, HIGH);
-  if (!wifiManager.autoConnect(portalName.c_str())) {
-    Serial.println("⚠️ Falha ao configurar o Wi-Fi. Reiniciando...");
-    delay(2000);
-    ESP.restart();
-    return;
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    digitalWrite(LED_STATUS_PIN, !digitalRead(LED_STATUS_PIN));
+    attempts++;
+    if (attempts > 40) {
+      Serial.println("\n⚠️ Falha ao conectar no Wi-Fi. Reiniciando...");
+      ESP.restart();
+    }
   }
 
   digitalWrite(LED_STATUS_PIN, LOW);
@@ -205,14 +246,19 @@ void setupWiFi() {
 }
 
 // =============================================================================
-// CONEX�O MQTT
+// CONEXÃO MQTT
 // =============================================================================
 void reconnectMQTT() {
   while (!mqttClient.connected()) {
     Serial.print("📡 Conectando ao Broker MQTT...");
     String clientId = "ESP32_AdapterHub_" + String(IDMAQ) + "_" + String(random(0xffff), HEX);
 
-    bool connected = mqttClient.connect(clientId.c_str());
+    bool connected = false;
+    if (strlen(MQTT_USER) > 0) {
+      connected = mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS);
+    } else {
+      connected = mqttClient.connect(clientId.c_str());
+    }
 
     if (connected) {
       Serial.println(" Conectado!");
@@ -250,7 +296,6 @@ void setup() {
   pinMode(LED_STATUS_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, LOW);
   digitalWrite(LED_STATUS_PIN, LOW);
-  preferences.begin("adapterhub", false);
 
   Serial.println("\n------------------------------------------");
   Serial.println("🚀 AdapterHub ESP32 Firmware Inicializando");

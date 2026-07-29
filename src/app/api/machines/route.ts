@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+
+export const dynamic = "force-dynamic";
 
 // GET /api/machines - list all machines for the current client
 export async function GET() {
@@ -33,13 +35,14 @@ export async function GET() {
     });
 
     const now = Date.now();
-    const TEN_MINUTES_MS = 10 * 60 * 1000;
+    // ESP32 sends heartbeat every 30s. If lastSeen > 90s ago, consider OFFLINE.
+    const ONLINE_THRESHOLD_MS = 90 * 1000;
 
     const formattedMachines = machines.map((m) => ({
       ...m,
       esps: m.esps.map((e) => {
         const isRecentlyActive = e.lastSeen
-          ? now - new Date(e.lastSeen).getTime() < TEN_MINUTES_MS
+          ? now - new Date(e.lastSeen).getTime() <= ONLINE_THRESHOLD_MS
           : false;
         return {
           ...e,
@@ -60,7 +63,7 @@ export async function GET() {
 }
 
 // POST /api/machines - create a new machine for the current client
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
 

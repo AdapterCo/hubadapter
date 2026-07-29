@@ -3,13 +3,15 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/machines/[id] - get a single machine with its esp32s
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
@@ -24,17 +26,6 @@ export async function GET(
       include: {
         esps: {
           orderBy: { serialNumber: "asc" },
-          select: {
-            id: true,
-            serialNumber: true,
-            mqttTopic: true,
-            online: true,
-            lastSeen: true,
-            credits: true,
-            mpPosId: true,
-            mpPosName: true,
-            createdAt: true,
-          },
         },
       },
     });
@@ -44,13 +35,14 @@ export async function GET(
     }
 
     const now = Date.now();
-    const TEN_MINUTES_MS = 10 * 60 * 1000;
+    // ESP32 sends heartbeat every 30s. If lastSeen > 90s ago, consider OFFLINE.
+    const ONLINE_THRESHOLD_MS = 90 * 1000;
 
     const formattedMachine = {
       ...machine,
       esps: machine.esps.map((e) => {
         const isRecentlyActive = e.lastSeen
-          ? now - new Date(e.lastSeen).getTime() < TEN_MINUTES_MS
+          ? now - new Date(e.lastSeen).getTime() <= ONLINE_THRESHOLD_MS
           : false;
         return {
           ...e,
@@ -75,8 +67,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {

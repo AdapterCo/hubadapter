@@ -43,12 +43,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "ESP32 not found" }, { status: 404 });
     }
 
-    const paymentId = `manual-${crypto.randomUUID()}`;
-    const amount = action === "credit_test" ? "1.00" : "0.00";
+    const paymentId = `${action}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const amount = action === "credit_test" ? 1.0 : 0.0;
     const message = JSON.stringify({
       action,
-      amount: Number(amount),
+      amount,
       paymentId,
+      timestamp: Date.now(),
     });
 
     const mqttRes = await fetch(process.env.MQTT_API_URL || "https://apimqtt.adapterco.com.br/publish", {
@@ -62,7 +63,11 @@ export async function POST(req: NextRequest) {
 
     const data = await mqttRes.json().catch(() => ({}));
 
-    return NextResponse.json(data, { status: mqttRes.status });
+    return NextResponse.json({
+      ...data,
+      paymentId,
+      sentTopic: esp32.mqttTopic,
+    }, { status: mqttRes.status });
   } catch (error) {
     console.error("[mqtt/publish]", error);
     return NextResponse.json(

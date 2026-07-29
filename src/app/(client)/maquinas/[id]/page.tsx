@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import Link from 'next/link'
 
 interface Esp32 {
   id: string
@@ -36,6 +35,10 @@ export default function MachineDetailPage() {
   const [machine, setMachine] = useState<Machine | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Feedback banner state for active ping/credit tests
+  const [testFeedback, setTestFeedback] = useState<{ espId: string; type: 'success' | 'error'; message: string } | null>(null)
+  const [testingEspId, setTestingEspId] = useState<string | null>(null)
+
   // Binding Modal state
   const [activeEsp, setActiveEsp] = useState<Esp32 | null>(null)
   const [mpDevices, setMpDevices] = useState<MpPosDevice[]>([])
@@ -55,6 +58,9 @@ export default function MachineDetailPage() {
 
   useEffect(() => {
     loadMachine()
+    // Refresh machine status every 15 seconds automatically
+    const interval = setInterval(loadMachine, 15000)
+    return () => clearInterval(interval)
   }, [loadMachine])
 
   // Open binding modal and fetch MP devices securely from backend
@@ -114,16 +120,81 @@ export default function MachineDetailPage() {
     }
   }
 
+  // Active Ping / Credit Test with real-time response check (ACK Verification)
   async function sendMqttCommand(esp32Id: string, action: 'ping' | 'credit_test') {
-    await fetch('/api/mqtt/publish', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        esp32Id,
-        action,
-      }),
-    })
-    alert(`Comando ${action.toUpperCase()} enviado para o ESP32!`)
+    setTestingEspId(esp32Id)
+    setTestFeedback(null)
+
+    const beforeTime = Date.now()
+
+    try {
+      const res = await fetch('/api/mqtt/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          esp32Id,
+          action,
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        setTestFeedback({
+          espId: esp32Id,
+          type: 'error',
+          message: `Falha ao enviar comando MQTT: ${errData.error || 'Erro desconhecido'}`,
+        })
+        setTestingEspId(null)
+        return
+      }
+
+      // If action is ping, poll status for 3 seconds to check if ESP32 ACK heartbeat was received
+      if (action === 'ping') {
+        let ackReceived = false
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await new Promise(r => setTimeout(r, 1000))
+          const checkRes = await fetch(`/api/machines/${machineId}`)
+          if (checkRes.ok) {
+            const data: Machine = await checkRes.json()
+            setMachine(data)
+            const targetEsp = data.esps.find(e => e.id === esp32Id)
+            if (targetEsp?.lastSeen && new Date(targetEsp.lastSeen).getTime() >= beforeTime - 1000) {
+              ackReceived = true
+              break
+            }
+          }
+        }
+
+        if (ackReceived) {
+          setTestFeedback({
+            espId: esp32Id,
+            type: 'success',
+            message: '🟢 ESP32 respondeu ao Ping! O dispositivo está ONLINE e conectado.',
+          })
+        } else {
+          setTestFeedback({
+            espId: esp32Id,
+            type: 'error',
+            message: '🔴 O ESP32 NÃO respondeu ao Ping. Verifique a alimentação, Wi-Fi e conexão do dispositivo.',
+          })
+        }
+      } else {
+        setTestFeedback({
+          espId: esp32Id,
+          type: 'success',
+          message: '⚡ Comando de teste de crédito (+ R$ 1,00) enviado ao dispositivo via MQTT com sucesso!',
+        })
+        loadMachine()
+      }
+    } catch {
+      setTestFeedback({
+        espId: esp32Id,
+        type: 'error',
+        message: 'Erro de comunicação com o servidor ao enviar comando.',
+      })
+    } finally {
+      setTestingEspId(null)
+    }
   }
 
   if (loading) {
@@ -139,7 +210,7 @@ export default function MachineDetailPage() {
       <div className="page-content">
         <div className="empty-state">
           <h2>Máquina não encontrada</h2>
-          <Link href="/maquinas" className="btn btn-secondary" style={{ marginTop: '16px' }}>⬅️ Voltar para Minhas Máquinas</Link>
+          <a href="/maquinas" className="btn btn-secondary" style={{ marginTop: '16px' }}>⬅️ Voltar para Minhas Máquinas</a>
         </div>
       </div>
     )
@@ -152,7 +223,7 @@ export default function MachineDetailPage() {
           <h1>🖥️ {machine.name}</h1>
           <p>{machine.location ? `📍 ${machine.location}` : 'Sem localização definida'}</p>
         </div>
-        <Link href="/maquinas" className="btn btn-secondary">⬅️ Voltar</Link>
+        <a href="/maquinas" className="btn btn-secondary">⬅️ Voltar</a>
       </div>
 
       <div className="section-title">📡 Dispositivo ESP32 (IDMAQ) Vinculado</div>
@@ -217,24 +288,38 @@ export default function MachineDetailPage() {
                 </div>
               </div>
 
+              {/* Feedback alert for testing commands */}
+              {testFeedback && testFeedback.espId === esp.id && (
+                <div className={`alert alert-${testFeedback.type}`} style={{ marginTop: '16px' }}>
+                  {testFeedback.message}
+                </div>
+              )}
+
               {/* Actions & Credits */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Crédito Total Acumulado: </span>
                   <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--accent-light)' }}>
-                    R$ {esp.credits.toFixed(2)}
+                    R$ {Number(esp.credits).toFixed(2)}
                   </span>
+                  {esp.lastSeen && (
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Última comunicação: {new Date(esp.lastSeen).toLocaleString('pt-BR')}
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     className="btn btn-secondary btn-sm"
+                    disabled={testingEspId === esp.id}
                     onClick={() => sendMqttCommand(esp.id, 'ping')}
                   >
-                    📡 Testar Conexão (Ping)
+                    {testingEspId === esp.id ? <span className="loading-spinner" /> : '📡 Testar Conexão (Ping)'}
                   </button>
                   <button
                     className="btn btn-success btn-sm"
+                    disabled={testingEspId === esp.id}
                     onClick={() => sendMqttCommand(esp.id, 'credit_test')}
                   >
                     ⚡ Teste de Crédito (+ R$ 1,00)
@@ -273,9 +358,9 @@ export default function MachineDetailPage() {
                 </div>
                 {needsConfig && (
                   <div style={{ textAlign: 'center', marginTop: '16px' }}>
-                    <Link href="/configuracoes" className="btn btn-primary">
+                    <a href="/configuracoes" className="btn btn-primary">
                       ⚙️ Ir para Configurações & Salvar Token MP
-                    </Link>
+                    </a>
                   </div>
                 )}
               </div>
