@@ -24,7 +24,7 @@ services:
     container_name: adapterhub-migrate
     environment:
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
-    command: ["npx", "prisma", "db", "push"]
+    command: ["npx", "prisma", "db", "push", "--accept-data-loss"]
     depends_on:
       db:
         condition: service_healthy
@@ -50,8 +50,6 @@ services:
       NEXT_PUBLIC_APP_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
       MQTT_API_URL: ${MQTT_API_URL:-https://apimqtt.adapterco.com.br/publish}
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       db:
         condition: service_healthy
     healthcheck:
