@@ -31,7 +31,6 @@ yarn-error.log*
 # OS & IDE
 .DS_Store
 *.pem
-firmware/secrets.h
 tsconfig.tsbuildinfo
 .vscode/
 .idea/

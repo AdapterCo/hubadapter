@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { encryptSecret, generateDeviceSecret, hashSecret } from "@/lib/crypto";
 
 async function requireAdmin() {
   const session = await getServerSession(authOptions);
@@ -67,20 +66,15 @@ export async function POST(req: NextRequest) {
       }
 
       let createdCount = 0;
-      const credentials: Array<{ idmaq: string; deviceApiKey: string }> = [];
       for (const idmaq of idmaqs) {
         try {
           const cleanIdmaq = idmaq.trim().toUpperCase();
-          const deviceApiKey = generateDeviceSecret();
           await prisma.device.create({
             data: {
               idmaq: cleanIdmaq,
               claimed: false,
-              apiKeyHash: hashSecret(deviceApiKey),
-              commandSecret: encryptSecret(deviceApiKey),
             },
           });
-          credentials.push({ idmaq: cleanIdmaq, deviceApiKey });
           createdCount++;
         } catch {
           // Ignore duplicate entries gracefully
@@ -91,8 +85,6 @@ export async function POST(req: NextRequest) {
         {
           created: createdCount,
           skippedDuplicates: idmaqs.length - createdCount,
-          credentials,
-          warning: "As chaves são exibidas apenas nesta resposta.",
         },
         { status: 201 }
       );
@@ -108,13 +100,10 @@ export async function POST(req: NextRequest) {
     }
 
     const cleanIdmaq = idmaq.trim().toUpperCase();
-    const deviceApiKey = generateDeviceSecret();
     const device = await prisma.device.create({
       data: {
         idmaq: cleanIdmaq,
         claimed: false,
-        apiKeyHash: hashSecret(deviceApiKey),
-        commandSecret: encryptSecret(deviceApiKey),
       },
     });
 
@@ -123,8 +112,6 @@ export async function POST(req: NextRequest) {
         ...device,
         apiKeyHash: undefined,
         commandSecret: undefined,
-        deviceApiKey,
-        warning: "A chave é exibida apenas nesta resposta.",
       },
       { status: 201 }
     );

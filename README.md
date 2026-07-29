@@ -49,15 +49,8 @@ secreta do webhook do Mercado Pago.
 ## Firmware
 
 Instale no Arduino IDE as bibliotecas WiFiManager, PubSubClient e ArduinoJson.
-
-Copie `firmware/secrets.example.h` para `firmware/secrets.h` e preencha:
-
-- IDMAQ;
-- chave única exibida no provisionamento do dispositivo;
-- certificado raiz do servidor HTTPS.
-
-O arquivo real de segredos é ignorado pelo Git.
-O Wi-Fi é configurado pelo portal do WiFiManager criado pelo próprio ESP32.
+Altere o valor de `IDMAQ` diretamente no arquivo `.ino` para cada dispositivo.
+O Wi-Fi é configurado pelo portal criado pelo próprio ESP32 através do WiFiManager.
 
 ## Banco e deploy
 

@@ -44,8 +44,6 @@ export async function POST(req: NextRequest) {
         idmaq: cleanSerial,
         claimed: true,
         clientId: session.user.id,
-        apiKeyHash: { not: null },
-        commandSecret: { not: null },
       },
     });
     if (!provisionedDevice) {
@@ -63,8 +61,6 @@ export async function POST(req: NextRequest) {
         mqttTopic: cleanSerial,
         online: false,
         credits: 0,
-        apiKeyHash: provisionedDevice.apiKeyHash,
-        commandSecret: provisionedDevice.commandSecret,
       },
     });
 

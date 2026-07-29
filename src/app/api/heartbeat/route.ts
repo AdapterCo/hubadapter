@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { authenticateDevice } from '@/lib/device-auth'
 import { checkRateLimit, getRequestIp } from '@/lib/rate-limit'
 import { z } from 'zod'
 
@@ -35,10 +34,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'idmaq is required' }, { status: 400 })
     }
 
-    const esp32 = await authenticateDevice(req, target)
+    const esp32 = await prisma.esp32.findUnique({
+      where: { serialNumber: target },
+    })
 
     if (!esp32) {
-      return NextResponse.json({ error: 'Unauthorized device' }, { status: 401 })
+      return NextResponse.json({ error: 'ESP32 not found' }, { status: 404 })
     }
 
     const updated = await prisma.esp32.update({

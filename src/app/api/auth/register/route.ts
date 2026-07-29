@@ -80,8 +80,6 @@ export async function POST(req: Request) {
           mqttTopic: cleanIdmaq,
           online: false,
           credits: 0,
-          apiKeyHash: device.apiKeyHash,
-          commandSecret: device.commandSecret,
         },
       })
 

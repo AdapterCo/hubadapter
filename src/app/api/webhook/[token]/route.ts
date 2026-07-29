@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { decryptSecret, signCommand } from '@/lib/crypto'
+import { decryptSecret } from '@/lib/crypto'
 import { verifyMercadoPagoSignature } from '@/lib/mercadopago'
 import { checkRateLimit, getRequestIp } from '@/lib/rate-limit'
 import { processOutboxBatch } from '@/lib/outbox'
@@ -188,11 +188,6 @@ export async function POST(
       return NextResponse.json({ error: 'Payment device not found' }, { status: 422 })
     }
 
-    const commandSecret = decryptSecret(esp32.commandSecret)
-    if (!commandSecret) {
-      return NextResponse.json({ error: 'Device is not securely provisioned' }, { status: 409 })
-    }
-
     const amount = new Prisma.Decimal(payment.transaction_amount).toDecimalPlaces(2)
     const amountText = amount.toFixed(2)
     const mpPaymentId = String(payment.id)
@@ -202,7 +197,6 @@ export async function POST(
       amount: Number(amountText),
       paymentId: mpPaymentId,
       serialNumber: esp32.serialNumber,
-      signature: signCommand(commandSecret, action, amountText, mpPaymentId),
     })
 
     await prisma.$transaction(async (tx) => {

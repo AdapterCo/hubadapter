@@ -5,12 +5,13 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
-#include <mbedtls/md.h>
-#include "secrets.h"
 
 // =============================================================================
 // CONFIGURAÇÕES DO DISPOSITIVO & REDE
 // =============================================================================
+// Código do dispositivo. Altere este valor para cada ESP32.
+const char* IDMAQ = "ADP-001";
+
 // Servidor Web & Webhook do AdapterHub
 const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";
 
@@ -49,10 +50,9 @@ void sendServerHeartbeat() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     String url = String(HUB_SERVER_URL) + "/api/heartbeat";
-    httpsClient.setCACert(ROOT_CA_CERT);
+    httpsClient.setInsecure();
     http.begin(httpsClient, url);
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("Authorization", String("Bearer ") + DEVICE_API_KEY);
 
     StaticJsonDocument<128> doc;
     doc["idmaq"] = IDMAQ;
@@ -104,43 +104,6 @@ void triggerCredit(float amount) {
   Serial.println("✅ Crédito liberado com sucesso!");
 }
 
-bool constantTimeEquals(const String& left, const String& right) {
-  if (left.length() != right.length()) return false;
-  unsigned char difference = 0;
-  for (size_t i = 0; i < left.length(); i++) {
-    difference |= left[i] ^ right[i];
-  }
-  return difference == 0;
-}
-
-String commandSignature(const String& action, float amount, const String& paymentId) {
-  String amountText = String(amount, 2);
-  String content = action + "|" + amountText + "|" + paymentId;
-  unsigned char result[32];
-
-  mbedtls_md_context_t context;
-  mbedtls_md_init(&context);
-  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  mbedtls_md_setup(&context, info, 1);
-  mbedtls_md_hmac_starts(
-    &context,
-    reinterpret_cast<const unsigned char*>(DEVICE_API_KEY),
-    strlen(DEVICE_API_KEY)
-  );
-  mbedtls_md_hmac_update(
-    &context,
-    reinterpret_cast<const unsigned char*>(content.c_str()),
-    content.length()
-  );
-  mbedtls_md_hmac_finish(&context, result);
-  mbedtls_md_free(&context);
-
-  char hex[65];
-  for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", result[i]);
-  hex[64] = '\0';
-  return String(hex);
-}
-
 bool wasProcessed(const String& paymentId) {
   String processed = preferences.getString("processed", "");
   return ("|" + processed + "|").indexOf("|" + paymentId + "|") >= 0;
@@ -184,21 +147,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   const char* action = doc["action"];
   float amount = doc["amount"] | 0.0;
   const char* paymentIdValue = doc["paymentId"];
-  const char* signatureValue = doc["signature"];
 
-  if (!action || !paymentIdValue || !signatureValue) {
-    Serial.println("Comando rejeitado: campos de segurança ausentes.");
+  if (!action || !paymentIdValue) {
+    Serial.println("Comando rejeitado: action ou paymentId ausente.");
     return;
   }
 
   String paymentId(paymentIdValue);
-  String signature(signatureValue);
-  String expected = commandSignature(String(action), amount, paymentId);
-  if (!constantTimeEquals(signature, expected)) {
-    Serial.println("Comando rejeitado: assinatura inválida.");
-    return;
-  }
-
   if (wasProcessed(paymentId)) {
     Serial.println("Comando ignorado: paymentId já processado.");
     return;

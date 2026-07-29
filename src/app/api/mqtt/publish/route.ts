@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { decryptSecret, signCommand } from "@/lib/crypto";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -44,18 +43,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "ESP32 not found" }, { status: 404 });
     }
 
-    const commandSecret = decryptSecret(esp32.commandSecret);
-    if (!commandSecret) {
-      return NextResponse.json({ error: "Device is not provisioned" }, { status: 409 });
-    }
-
     const paymentId = `manual-${crypto.randomUUID()}`;
     const amount = action === "credit_test" ? "1.00" : "0.00";
     const message = JSON.stringify({
       action,
       amount: Number(amount),
       paymentId,
-      signature: signCommand(commandSecret, action, amount, paymentId),
     });
 
     const mqttRes = await fetch(process.env.MQTT_API_URL || "https://apimqtt.adapterco.com.br/publish", {
