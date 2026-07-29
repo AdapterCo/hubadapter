@@ -15,6 +15,8 @@ interface MercadoPagoPayment {
   currency_id: string
   external_reference?: string
   pos_id?: string | number
+  store_id?: string | number
+  collector_id?: number
   point_of_interaction?: {
     transaction_data?: {
       pos_id?: string | number
@@ -22,30 +24,27 @@ interface MercadoPagoPayment {
   }
 }
 
-interface MercadoPagoNotification {
-  data?: { id?: string | number }
-  id?: string | number
-  resource?: string
-}
-
-function paymentIdFromBody(body: MercadoPagoNotification): string {
-  let value = body?.data?.id || body?.id || body?.resource || ''
-  if (typeof value === 'string' && value.includes('/')) {
-    value = value.split('/').pop() || ''
+function extractPaymentId(req: NextRequest, body: any): string {
+  let val = body?.data?.id || body?.id || body?.resource || ''
+  if (!val) {
+    const url = new URL(req.url)
+    val =
+      url.searchParams.get('id') ||
+      url.searchParams.get('data.id') ||
+      url.searchParams.get('resource') ||
+      ''
   }
-  return String(value).trim()
+  if (typeof val === 'string' && val.includes('/')) {
+    val = val.split('/').pop() || ''
+  }
+  return String(val).trim()
 }
 
-export async function POST(
+async function handleNotification(
   req: NextRequest,
-  { params }: { params: Promise<{ token: string }> }
+  token: string,
+  body: any
 ) {
-  const { token } = await params
-  const contentLength = Number(req.headers.get('content-length') || 0)
-  if (contentLength > 64 * 1024) {
-    return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
-  }
-
   const rateLimit = checkRateLimit(
     `webhook:${token}:${getRequestIp(req)}`,
     120,
@@ -73,34 +72,45 @@ export async function POST(
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
-    const body: unknown = await req.json().catch(() => null)
-    if (!body || typeof body !== 'object') {
-      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-    }
-
-    const rawPaymentId = paymentIdFromBody(body as MercadoPagoNotification)
+    const rawPaymentId = extractPaymentId(req, body)
     if (!rawPaymentId) {
-      return NextResponse.json({ ok: true }, { status: 200 })
+      return NextResponse.json({ ok: true, message: 'No payment ID found in notification' }, { status: 200 })
     }
 
+    // 1. Anti-Replay Protection: Check if this paymentId was already processed
+    const existingPayment = await prisma.payment.findUnique({
+      where: { mpPaymentId: rawPaymentId },
+      select: { id: true },
+    })
+
+    if (existingPayment) {
+      return NextResponse.json({ ok: true, message: 'Payment already processed' }, { status: 200 })
+    }
+
+    // 2. Validate signature if present (Webhook v2 mode)
+    const signature = req.headers.get('x-signature')
     const webhookSecret = decryptSecret(client.mpWebhookSecret)
-    if (
-      !webhookSecret ||
-      !verifyMercadoPagoSignature({
-        signature: req.headers.get('x-signature'),
+
+    if (signature && webhookSecret) {
+      const isValidSig = verifyMercadoPagoSignature({
+        signature,
         requestId: req.headers.get('x-request-id'),
         dataId: rawPaymentId.toLowerCase(),
         secret: webhookSecret,
       })
-    ) {
-      return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 })
+
+      if (!isValidSig) {
+        return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 })
+      }
     }
 
+    // 3. Get client's Mercado Pago Access Token
     const accessToken = decryptSecret(client.mpAccessToken)
     if (!accessToken) {
       return NextResponse.json({ error: 'Mercado Pago token is not configured' }, { status: 409 })
     }
 
+    // 4. Secure Verification: Query official Mercado Pago API directly using the client's token
     const mpResponse = await fetch(
       `https://api.mercadopago.com/v1/payments/${encodeURIComponent(rawPaymentId)}`,
       {
@@ -117,36 +127,42 @@ export async function POST(
           data: { mpTokenValid: false, mpTokenCheckedAt: new Date() },
         })
       }
-      console.error('[webhook] Mercado Pago validation failed', {
+      console.error('[webhook/IPN] Mercado Pago API query failed', {
         status: mpResponse.status,
         paymentId: rawPaymentId,
         clientId: client.id,
       })
-      return NextResponse.json({ error: 'Payment validation failed' }, { status: 502 })
+      return NextResponse.json({ error: 'Payment validation failed at Mercado Pago' }, { status: 502 })
     }
 
     await prisma.client.update({
       where: { id: client.id },
       data: { mpTokenValid: true, mpTokenCheckedAt: new Date() },
     })
+
     const payment = (await mpResponse.json()) as MercadoPagoPayment
+    const mpPaymentId = String(payment.id)
+
+    // 5. Strict Payment Validation: status must be approved, BRL currency, amount > 0
     if (
-      String(payment.id) !== rawPaymentId ||
+      mpPaymentId !== rawPaymentId ||
       payment.status.toLowerCase() !== 'approved' ||
       payment.currency_id !== 'BRL' ||
       !Number.isFinite(payment.transaction_amount) ||
       payment.transaction_amount <= 0
     ) {
-      return NextResponse.json({ ok: true }, { status: 200 })
+      return NextResponse.json({ ok: true, message: 'Payment status not approved or non-BRL' }, { status: 200 })
     }
 
     const externalReference = String(payment.external_reference || '').trim()
     const posId = String(
       payment.pos_id ||
       payment.point_of_interaction?.transaction_data?.pos_id ||
+      payment.store_id ||
       ''
     ).trim()
 
+    // 6. Match Payment to ESP32 device
     let esp32 = posId
       ? await prisma.esp32.findFirst({
           where: { mpPosId: posId, machine: { clientId: client.id } },
@@ -169,18 +185,29 @@ export async function POST(
       })
     }
 
-    if (!esp32 || (!posId && !externalReference)) {
+    // Fallback: If client has exactly 1 ESP32 registered, associate direct Point machine sales to it
+    if (!esp32) {
+      const clientEsps = await prisma.esp32.findMany({
+        where: { machine: { clientId: client.id } },
+        take: 2,
+      })
+      if (clientEsps.length === 1) {
+        esp32 = clientEsps[0]
+      }
+    }
+
+    if (!esp32) {
       await prisma.webhookIssue.create({
         data: {
           clientId: client.id,
-          paymentId: rawPaymentId,
-          reason: 'Pagamento aprovado sem dispositivo associado',
+          paymentId: mpPaymentId,
+          reason: 'Pagamento aprovado no Mercado Pago sem dispositivo ESP32 associado',
           posId: posId || null,
           externalReference: externalReference || null,
         },
       })
-      console.warn('[webhook] Payment could not be associated', {
-        paymentId: rawPaymentId,
+      console.warn('[webhook/IPN] Payment could not be associated to an ESP32', {
+        paymentId: mpPaymentId,
         clientId: client.id,
         posId,
         externalReference,
@@ -190,7 +217,6 @@ export async function POST(
 
     const amount = new Prisma.Decimal(payment.transaction_amount).toDecimalPlaces(2)
     const amountText = amount.toFixed(2)
-    const mpPaymentId = String(payment.id)
     const action = 'credit'
     const payload = JSON.stringify({
       action,
@@ -199,12 +225,13 @@ export async function POST(
       serialNumber: esp32.serialNumber,
     })
 
+    // 7. Atomic Transaction: Record Payment, Increment ESP32 Credits, Queue Outbox MQTT Message
     await prisma.$transaction(async (tx) => {
-      const existing = await tx.payment.findUnique({
+      const doubleCheck = await tx.payment.findUnique({
         where: { mpPaymentId },
         select: { id: true },
       })
-      if (existing) return
+      if (doubleCheck) return
 
       const storedPayment = await tx.payment.create({
         data: {
@@ -213,7 +240,7 @@ export async function POST(
           mpPaymentId,
           amount,
           status: 'approved',
-          externalRef: externalReference || posId,
+          externalRef: externalReference || posId || 'direct-pos',
         },
       })
 
@@ -249,10 +276,33 @@ export async function POST(
       })
     })
 
+    // Immediately trigger outbox worker batch to publish MQTT credit to ESP32
     await processOutboxBatch(5)
-    return NextResponse.json({ ok: true }, { status: 200 })
+    return NextResponse.json({ ok: true, paymentId: mpPaymentId }, { status: 200 })
   } catch (error) {
-    console.error('[webhook] Error processing notification', error)
+    console.error('[webhook/IPN] Error processing notification', error)
     return NextResponse.json({ error: 'Temporary processing failure' }, { status: 500 })
   }
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ token: string }> }
+) {
+  const { token } = await params
+  const contentLength = Number(req.headers.get('content-length') || 0)
+  if (contentLength > 64 * 1024) {
+    return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+  }
+
+  const body: unknown = await req.json().catch(() => null)
+  return handleNotification(req, token, body)
+}
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ token: string }> }
+) {
+  const { token } = await params
+  return handleNotification(req, token, {})
 }
