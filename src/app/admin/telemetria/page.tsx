@@ -4,6 +4,10 @@ import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import TelemetryLiveStatus from '@/components/TelemetryLiveStatus'
 
+export const dynamic = 'force-dynamic'
+
+const ONLINE_THRESHOLD_MS = 90 * 1000
+
 export default async function AdminTelemetriaPage() {
   const session = await getServerSession(authOptions)
   if (!session || session.user.role !== 'ADMIN') redirect('/login')
@@ -32,9 +36,9 @@ export default async function AdminTelemetriaPage() {
     }),
   ])
 
-  const onlineCutoff = Date.now() - 10 * 60 * 1000
+  const now = Date.now()
   const isOnline = (lastSeen: Date | null) =>
-    Boolean(lastSeen && new Date(lastSeen).getTime() >= onlineCutoff)
+    Boolean(lastSeen && now - new Date(lastSeen).getTime() <= ONLINE_THRESHOLD_MS)
   const onlineCount = esps.filter(e => isOnline(e.lastSeen)).length
 
   return (

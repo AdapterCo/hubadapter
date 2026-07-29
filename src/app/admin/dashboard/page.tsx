@@ -1,13 +1,19 @@
 import { prisma } from '@/lib/prisma'
 
+export const dynamic = 'force-dynamic'
+
+const ONLINE_THRESHOLD_MS = 90 * 1000
+
 async function getStats() {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  const onlineCutoff = new Date(Date.now() - ONLINE_THRESHOLD_MS)
+
   const [totalClients, totalDevices, onlineDevices, paymentsToday, revenueResult, recentPayments] = await Promise.all([
     prisma.client.count({ where: { role: 'CLIENT' } }),
     prisma.esp32.count(),
     prisma.esp32.count({
-      where: { lastSeen: { gte: new Date(Date.now() - 10 * 60 * 1000) } },
+      where: { lastSeen: { gte: onlineCutoff } },
     }),
     prisma.payment.count({ where: { createdAt: { gte: today }, status: 'approved' } }),
     prisma.payment.aggregate({ where: { createdAt: { gte: today }, status: 'approved' }, _sum: { amount: true } }),

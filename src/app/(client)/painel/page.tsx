@@ -4,9 +4,15 @@ import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 
+export const dynamic = 'force-dynamic'
+
+// Strict 90 seconds online cutoff (ESP32 sends heartbeats every 30s)
+const ONLINE_THRESHOLD_MS = 90 * 1000
+
 async function getClientData(clientId: string) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  const onlineCutoff = new Date(Date.now() - ONLINE_THRESHOLD_MS)
 
   const [machines, paymentsToday, revenueResult, onlineDevices, clientSettings] = await Promise.all([
     prisma.machine.findMany({
@@ -20,7 +26,7 @@ async function getClientData(clientId: string) {
     prisma.esp32.count({
       where: {
         machine: { clientId },
-        lastSeen: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+        lastSeen: { gte: onlineCutoff },
       },
     }),
     prisma.client.findUnique({
@@ -122,7 +128,7 @@ export default async function PainelPage() {
         <div className="grid-2">
           {data.machines.map(m => {
             const onlineEsps = m.esps.filter(
-              e => e.lastSeen && Date.now() - new Date(e.lastSeen).getTime() < 10 * 60 * 1000
+              e => e.lastSeen && Date.now() - new Date(e.lastSeen).getTime() <= ONLINE_THRESHOLD_MS
             ).length
             const totalCredits = m.esps.reduce((acc, e) => acc + Number(e.credits), 0)
             return (
