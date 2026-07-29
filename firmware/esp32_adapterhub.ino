@@ -70,7 +70,7 @@ const unsigned long HEARTBEAT_INTERVAL = 30000; // Envia heartbeat a cada 30 seg
 void sendServerHeartbeat() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    String url = String(HUB_SERVER_URL) + "/api/esp32/heartbeat";
+    String url = String(HUB_SERVER_URL) + "/api/heartbeat";
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
 
