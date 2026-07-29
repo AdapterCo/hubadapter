@@ -31,7 +31,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Brasil211709..}
       ADMIN_NAME: ${ADMIN_NAME:-Admin AdapterHub}
       SEED_DEVICE_IDS: ${SEED_DEVICE_IDS:-ADP-001,ADP-002,ADP-003,ADP-004,ADP-005,ADP-006,ADP-007,ADP-008,ADP-009,ADP-010}
-    command: ["sh", "-c", "npx prisma db push --accept-data-loss && npm run db:seed"]
+    command: ["sh", "-c", "npx prisma db push --accept-data-loss && node prisma/seed.js"]
     depends_on:
       db:
         condition: service_healthy
@@ -119,7 +119,7 @@ services:
       - -c
       - |
         while true; do
-          npm run db:cleanup || true
+          node prisma/seed.js || true
           sleep 86400
         done
     depends_on:

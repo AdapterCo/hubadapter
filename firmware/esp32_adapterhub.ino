@@ -28,11 +28,11 @@
 // CONFIGURAÇÕES DO DISPOSITIVO & REDE
 // =============================================================================
 // Código IDMAQ impresso no dispositivo (ex: ADP-001, ADP-002...)
-const char* IDMAQ = "ADP-001";
+const char* IDMAQ = "ADP-002";
 
 // Credenciais da rede Wi-Fi
-const char* WIFI_SSID     = "SUA_REDE_WIFI";
-const char* WIFI_PASSWORD = "SUA_SENHA_WIFI";
+const char* WIFI_SSID     = "Adapter CO";
+const char* WIFI_PASSWORD = "Home211314.";
 
 // Servidor Web & Webhook do AdapterHub
 const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";
