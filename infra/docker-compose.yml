@@ -24,7 +24,7 @@ services:
     container_name: adapterhub-migrate
     environment:
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
-    command: ["npx", "prisma", "db", "push", "--accept-data-loss"]
+    command: ["sh", "-c", "npx prisma db push --accept-data-loss && node prisma/seed.js"]
     depends_on:
       db:
         condition: service_healthy
