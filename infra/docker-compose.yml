@@ -1,0 +1,104 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: adapterhub-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_adapterhub_sec2024}
+      POSTGRES_DB: adapterhub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d adapterhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - adapterhub_internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: adapterhub-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adapterhub_internal
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+    container_name: adapterhub-migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
+    command: ["npx", "prisma", "db", "push"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - adapterhub_internal
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+    container_name: adapterhub-web
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres_adapterhub_sec2024}@db:5432/adapterhub?schema=public
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-super-secret-adapterhub-key-2024}
+      NEXTAUTH_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
+      NEXT_PUBLIC_APP_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
+      MQTT_API_URL: ${MQTT_API_URL:-https://apimqtt.adapterco.com.br/publish}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/login"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik9"
+      - "traefik.http.routers.adapterhub-web-http.rule=Host(`${DOMAIN:-hub.adapterco.com.br}`)"
+      - "traefik.http.routers.adapterhub-web-http.entrypoints=http"
+      - "traefik.http.routers.adapterhub-web-http.middlewares=https-redirect"
+      - "traefik.http.routers.adapterhub-web.rule=Host(`${DOMAIN:-hub.adapterco.com.br}`)"
+      - "traefik.http.routers.adapterhub-web.entrypoints=https"
+      - "traefik.http.routers.adapterhub-web.tls=true"
+      - "traefik.http.routers.adapterhub-web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.adapterhub-web.loadbalancer.server.port=3000"
+    networks:
+      - adapterhub_internal
+      - traefik9
+
+volumes:
+  pgdata:
+  redis_data:
+
+networks:
+  adapterhub_internal:
+    driver: bridge
+  traefik9:
+    external: true

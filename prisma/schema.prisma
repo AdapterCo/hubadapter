@@ -1,0 +1,81 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Device {
+  id        String   @id @default(cuid())
+  idmaq     String   @unique
+  claimed   Boolean  @default(false)
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Client {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  passwordHash  String
+  mpAccessToken String?
+  webhookToken  String    @unique @default(cuid())
+  role          String    @default("CLIENT")
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  devices       Device[]
+  machines      Machine[]
+  payments      Payment[]
+}
+
+model Machine {
+  id        String   @id @default(cuid())
+  clientId  String
+  name      String
+  location  String?
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  esps      Esp32[]
+  createdAt DateTime @default(now())
+}
+
+model Esp32 {
+  id           String    @id @default(cuid())
+  machineId    String
+  serialNumber String    @unique
+  mqttTopic    String    @unique
+  online       Boolean   @default(false)
+  lastSeen     DateTime?
+  credits      Float     @default(0)
+  mpPosId      String?
+  mpPosName    String?
+  machine      Machine   @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+  events       TelemetryEvent[]
+  createdAt    DateTime  @default(now())
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  clientId    String
+  esp32Id     String
+  mpPaymentId String   @unique
+  amount      Float
+  status      String
+  externalRef String?
+  createdAt   DateTime @default(now())
+  client      Client   @relation(fields: [clientId], references: [id])
+  esp32       Esp32    @relation(fields: [esp32Id], references: [id])
+}
+
+model TelemetryEvent {
+  id        String   @id @default(cuid())
+  esp32Id   String
+  type      String
+  payload   String
+  esp32     Esp32    @relation(fields: [esp32Id], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
