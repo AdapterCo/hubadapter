@@ -10,11 +10,6 @@ interface Device {
   client?: { name: string; email: string } | null
 }
 
-interface ProvisionedCredential {
-  idmaq: string
-  deviceApiKey: string
-}
-
 export default function DispositivosPage() {
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(true)
@@ -23,7 +18,6 @@ export default function DispositivosPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [filter, setFilter] = useState<'all' | 'free' | 'claimed'>('all')
-  const [newCredentials, setNewCredentials] = useState<ProvisionedCredential[]>([])
 
   const load = useCallback(async () => {
     const res = await fetch('/api/admin/devices')
@@ -45,8 +39,6 @@ export default function DispositivosPage() {
       body: JSON.stringify({ idmaqs }),
     })
     if (res.ok) {
-      const data = await res.json()
-      setNewCredentials(data.credentials || [])
       setShowModal(false)
       setBulkInput('')
       load()
@@ -59,15 +51,11 @@ export default function DispositivosPage() {
 
   async function resetDevice(id: string) {
     if (!confirm('Resetar este dispositivo? O cliente atual perderá o vínculo.')) return
-    const response = await fetch(`/api/admin/devices/${id}`, {
+    await fetch(`/api/admin/devices/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reset: true }),
     })
-    if (response.ok) {
-      const data = await response.json()
-      setNewCredentials([{ idmaq: data.idmaq, deviceApiKey: data.deviceApiKey }])
-    }
     load()
   }
 
@@ -98,19 +86,6 @@ export default function DispositivosPage() {
         </button>
       </div>
 
-      {newCredentials.length > 0 && (
-        <div className="alert alert-warning" style={{ marginBottom: '20px' }}>
-          <div style={{ width: '100%' }}>
-            <strong>Guarde estas chaves agora. Elas não serão exibidas novamente.</strong>
-            <pre style={{ whiteSpace: 'pre-wrap', marginTop: '10px', userSelect: 'all' }}>
-              {newCredentials.map(item => `${item.idmaq}: ${item.deviceApiKey}`).join('\n')}
-            </pre>
-            <button className="btn btn-secondary btn-sm" onClick={() => setNewCredentials([])}>
-              Já guardei as chaves
-            </button>
-          </div>
-        </div>
-      )}
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         {(['all', 'free', 'claimed'] as const).map(f => (

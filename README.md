@@ -19,8 +19,7 @@ pagamentos Mercado Pago e entrega idempotente de créditos por MQTT.
 5. Execute `npm run db:seed` para criar o administrador.
 6. Inicie com `npm run dev`.
 
-Nunca versionar `.env`, `firmware/secrets.h`, tokens Mercado Pago, credenciais
-MQTT ou senhas Wi-Fi.
+Nunca versionar `.env`, tokens Mercado Pago ou outras credenciais da aplicação.
 
 ## Variáveis obrigatórias
 

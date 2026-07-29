@@ -10,14 +10,12 @@ datasource db {
 }
 
 model Device {
-  id            String   @id @default(cuid())
-  idmaq         String   @unique
-  claimed       Boolean  @default(false)
-  clientId      String?
-  apiKeyHash    String?
-  commandSecret String?
-  client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  createdAt     DateTime @default(now())
+  id        String   @id @default(cuid())
+  idmaq     String   @unique
+  claimed   Boolean  @default(false)
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
 
   @@index([clientId])
 }
@@ -54,21 +52,19 @@ model Machine {
 }
 
 model Esp32 {
-  id            String           @id @default(cuid())
-  machineId     String
-  serialNumber  String           @unique
-  mqttTopic     String           @unique
-  online        Boolean          @default(false)
-  lastSeen      DateTime?
-  credits       Decimal          @default(0) @db.Decimal(12, 2)
-  mpPosId       String?
-  mpPosName     String?
-  apiKeyHash    String?
-  commandSecret String?
-  machine       Machine          @relation(fields: [machineId], references: [id], onDelete: Cascade)
-  payments      Payment[]
-  events        TelemetryEvent[]
-  createdAt     DateTime         @default(now())
+  id           String           @id @default(cuid())
+  machineId    String
+  serialNumber String           @unique
+  mqttTopic    String           @unique
+  online       Boolean          @default(false)
+  lastSeen     DateTime?
+  credits      Decimal          @default(0) @db.Decimal(12, 2)
+  mpPosId      String?
+  mpPosName    String?
+  machine      Machine          @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+  events       TelemetryEvent[]
+  createdAt    DateTime         @default(now())
 
   @@index([machineId])
   @@index([mpPosId])

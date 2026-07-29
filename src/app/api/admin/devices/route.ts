@@ -110,8 +110,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         ...device,
-        apiKeyHash: undefined,
-        commandSecret: undefined,
       },
       { status: 201 }
     );

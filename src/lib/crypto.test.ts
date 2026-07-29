@@ -2,9 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   decryptSecret,
   encryptSecret,
-  hashSecret,
   secretsEqual,
-  signCommand,
 } from './crypto'
 
 describe('secret protection', () => {
@@ -24,8 +22,8 @@ describe('secret protection', () => {
     expect(() => decryptSecret(modified)).toThrow()
   })
 
-  it('creates stable hashes and command signatures', () => {
-    expect(secretsEqual(hashSecret('key'), hashSecret('key'))).toBe(true)
-    expect(signCommand('key', 'credit', '1.00', 'payment-1')).toHaveLength(64)
+  it('compares secrets without exposing their contents', () => {
+    expect(secretsEqual('same-value', 'same-value')).toBe(true)
+    expect(secretsEqual('same-value', 'different')).toBe(false)
   })
 })

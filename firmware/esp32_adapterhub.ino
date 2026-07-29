@@ -10,7 +10,7 @@
 // CONFIGURAÇÕES DO DISPOSITIVO & REDE
 // =============================================================================
 // Código do dispositivo. Altere este valor para cada ESP32.
-const char* IDMAQ = "ADP-001";
+const char* IDMAQ = "ADP-002";
 
 // Servidor Web & Webhook do AdapterHub
 const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";

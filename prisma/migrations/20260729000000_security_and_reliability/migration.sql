@@ -1,15 +1,9 @@
-ALTER TABLE "Device"
-  ADD COLUMN "apiKeyHash" TEXT,
-  ADD COLUMN "commandSecret" TEXT;
-
 ALTER TABLE "Client"
   ADD COLUMN "mpWebhookSecret" TEXT,
   ADD COLUMN "mpTokenValid" BOOLEAN,
   ADD COLUMN "mpTokenCheckedAt" TIMESTAMP(3);
 
 ALTER TABLE "Esp32"
-  ADD COLUMN "apiKeyHash" TEXT,
-  ADD COLUMN "commandSecret" TEXT,
   ALTER COLUMN "credits" TYPE DECIMAL(12,2) USING ROUND("credits"::numeric, 2);
 
 ALTER TABLE "Payment"

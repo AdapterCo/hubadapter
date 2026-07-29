@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { encryptSecret, generateDeviceSecret, hashSecret } from "@/lib/crypto";
 
 async function requireAdmin() {
   const session = await getServerSession(authOptions);
@@ -63,7 +62,6 @@ export async function PATCH(
       return NextResponse.json({ error: "Device not found" }, { status: 404 });
     }
 
-    const deviceApiKey = generateDeviceSecret();
     const updated = await prisma.$transaction(async (tx) => {
       const linkedEsp = await tx.esp32.findUnique({
         where: { serialNumber: device.idmaq },
@@ -79,8 +77,6 @@ export async function PATCH(
         data: {
           claimed: false,
           clientId: null,
-          apiKeyHash: hashSecret(deviceApiKey),
-          commandSecret: encryptSecret(deviceApiKey),
         },
         select: {
           id: true,
@@ -94,8 +90,6 @@ export async function PATCH(
 
     return NextResponse.json({
       ...updated,
-      deviceApiKey,
-      warning: "A nova chave é exibida apenas nesta resposta.",
     });
   } catch (error) {
     console.error("[admin/devices/[id] PATCH]", error);

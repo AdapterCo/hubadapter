@@ -1,8 +1,6 @@
 import {
   createCipheriv,
   createDecipheriv,
-  createHash,
-  createHmac,
   randomBytes,
   timingSafeEqual,
 } from 'crypto'
@@ -50,22 +48,8 @@ export function decryptSecret(value: string | null | undefined): string | null {
   ]).toString('utf8')
 }
 
-export function hashSecret(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex')
-}
-
 export function secretsEqual(left: string, right: string): boolean {
   const a = Buffer.from(left)
   const b = Buffer.from(right)
   return a.length === b.length && timingSafeEqual(a, b)
-}
-
-export function signCommand(secret: string, action: string, amount: string, paymentId: string): string {
-  return createHmac('sha256', secret)
-    .update(`${action}|${amount}|${paymentId}`)
-    .digest('hex')
-}
-
-export function generateDeviceSecret(): string {
-  return randomBytes(32).toString('base64url')
 }
