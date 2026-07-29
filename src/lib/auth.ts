@@ -3,6 +3,35 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 
+async function ensureSeed() {
+  try {
+    const totalClients = await prisma.client.count()
+    if (totalClients === 0) {
+      const hashedPassword = await bcrypt.hash('Brasil211709..', 12)
+      await prisma.client.create({
+        data: {
+          name: 'Admin AdapterHub',
+          email: 'brennandinc@gmail.com',
+          passwordHash: hashedPassword,
+          role: 'ADMIN',
+          active: true,
+          webhookToken: 'admin-webhook-' + Date.now(),
+        },
+      })
+      const devices = [
+        'ADP-001', 'ADP-002', 'ADP-003', 'ADP-004', 'ADP-005',
+        'ADP-006', 'ADP-007', 'ADP-008', 'ADP-009', 'ADP-010',
+      ]
+      for (const idmaq of devices) {
+        await prisma.device.upsert({ where: { idmaq }, update: {}, create: { idmaq } })
+      }
+      console.log('✅ Auto-seed do Admin concluído com sucesso!')
+    }
+  } catch (err) {
+    console.error('[auth ensureSeed error]', err)
+  }
+}
+
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: 'jwt' },
@@ -21,15 +50,19 @@ export const authOptions: NextAuthOptions = {
 
         const cleanEmail = credentials.email.trim().toLowerCase()
 
+        // Guarantee database has admin account even if seed script hasn't run yet
+        await ensureSeed()
+
         const user = await prisma.client.findFirst({
           where: {
             email: {
               equals: cleanEmail,
+              mode: 'insensitive',
             },
           },
         })
 
-        if (!user || !user.active) return null
+        if (!user || user.active === false) return null
 
         const passwordMatch = await bcrypt.compare(credentials.password, user.passwordHash)
         if (!passwordMatch) return null
