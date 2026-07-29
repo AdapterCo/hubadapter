@@ -8,7 +8,7 @@ pagamentos Mercado Pago e entrega idempotente de créditos por MQTT.
 - Node.js 20.9 ou superior
 - PostgreSQL 16
 - Docker e Docker Compose para produção
-- Broker MQTT com TLS, autenticação e ACL por dispositivo
+- Broker MQTT acessível pelo ESP32 na porta configurada
 
 ## Configuração local
 
@@ -30,7 +30,7 @@ MQTT ou senhas Wi-Fi.
 - `APP_ENCRYPTION_KEY`: 32 bytes em hexadecimal ou base64 para AES-256-GCM.
 - `ADMIN_EMAIL` e `ADMIN_PASSWORD`: provisionamento explícito do administrador.
 - `OUTBOX_WORKER_SECRET`: autenticação do processador de comandos pendentes.
-- `MQTT_API_URL` e `MQTT_API_TOKEN`: publicação autenticada no gateway MQTT.
+- `MQTT_API_URL`: endpoint HTTP de publicação no gateway MQTT.
 
 Cada cliente também deve configurar no painel seu Access Token e a assinatura
 secreta do webhook do Mercado Pago.
@@ -43,20 +43,21 @@ secreta do webhook do Mercado Pago.
 - Transação atômica para pagamento, saldo, telemetria e outbox.
 - Worker persistente com backoff para entrega MQTT.
 - Heartbeat autenticado por chave exclusiva do dispositivo.
-- MQTT TLS, credenciais por dispositivo, assinatura HMAC e deduplicação de
-  `paymentId` no firmware.
+- MQTT sem autenticação no ambiente atual, com assinatura HMAC e deduplicação
+  de `paymentId` no firmware.
 
 ## Firmware
+
+Instale no Arduino IDE as bibliotecas WiFiManager, PubSubClient e ArduinoJson.
 
 Copie `firmware/secrets.example.h` para `firmware/secrets.h` e preencha:
 
 - IDMAQ;
-- Wi-Fi;
 - chave única exibida no provisionamento do dispositivo;
-- usuário e senha MQTT exclusivos;
-- certificado raiz dos servidores HTTPS/MQTT.
+- certificado raiz do servidor HTTPS.
 
 O arquivo real de segredos é ignorado pelo Git.
+O Wi-Fi é configurado pelo portal do WiFiManager criado pelo próprio ESP32.
 
 ## Banco e deploy
 

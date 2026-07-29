@@ -55,7 +55,6 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY is required}
       OUTBOX_WORKER_SECRET: ${OUTBOX_WORKER_SECRET:?OUTBOX_WORKER_SECRET is required}
-      MQTT_API_TOKEN: ${MQTT_API_TOKEN:?MQTT_API_TOKEN is required}
       NEXTAUTH_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
       NEXT_PUBLIC_APP_URL: "https://${DOMAIN:-hub.adapterco.com.br}"
       MQTT_API_URL: ${MQTT_API_URL:-https://apimqtt.adapterco.com.br/publish}

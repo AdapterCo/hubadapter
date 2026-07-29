@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <PubSubClient.h>
@@ -15,7 +16,7 @@ const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";
 
 // Servidor MQTT da AdapterCo
 const char* MQTT_SERVER   = "apimqtt.adapterco.com.br";
-const int   MQTT_PORT     = 8883;
+const int   MQTT_PORT     = 1883;
 
 // Pino do Relé / Pulso para o mecanismo da máquina
 const int RELAY_PIN       = 26; // GPIO para acionamento do relé
@@ -33,9 +34,9 @@ const bool PULSE_PER_BRL    = true;
 // =============================================================================
 // VARIÁVEIS GLOBAIS DE ESTADO
 // =============================================================================
-WiFiClientSecure mqttTlsClient;
+WiFiClient mqttNetworkClient;
 WiFiClientSecure httpsClient;
-PubSubClient mqttClient(mqttTlsClient);
+PubSubClient mqttClient(mqttNetworkClient);
 Preferences preferences;
 
 unsigned long lastHeartbeatTime = 0;
@@ -224,22 +225,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 void setupWiFi() {
   delay(10);
   Serial.println();
-  Serial.print("🌐 Conectando à rede Wi-Fi: ");
-  Serial.println(WIFI_SSID);
+  Serial.println("🌐 Iniciando WiFiManager...");
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFiManager wifiManager;
+  wifiManager.setConfigPortalTimeout(180);
+  String portalName = String("AdapterHub-") + IDMAQ;
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    digitalWrite(LED_STATUS_PIN, !digitalRead(LED_STATUS_PIN));
-    attempts++;
-    if (attempts > 40) {
-      Serial.println("\n⚠️ Falha ao conectar no Wi-Fi. Reiniciando...");
-      ESP.restart();
-    }
+  digitalWrite(LED_STATUS_PIN, HIGH);
+  if (!wifiManager.autoConnect(portalName.c_str())) {
+    Serial.println("⚠️ Falha ao configurar o Wi-Fi. Reiniciando...");
+    delay(2000);
+    ESP.restart();
+    return;
   }
 
   digitalWrite(LED_STATUS_PIN, LOW);
@@ -260,8 +257,7 @@ void reconnectMQTT() {
     Serial.print("📡 Conectando ao Broker MQTT...");
     String clientId = "ESP32_AdapterHub_" + String(IDMAQ) + "_" + String(random(0xffff), HEX);
 
-    bool connected = false;
-    connected = mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD);
+    bool connected = mqttClient.connect(clientId.c_str());
 
     if (connected) {
       Serial.println(" Conectado!");
@@ -309,7 +305,6 @@ void setup() {
 
   setupWiFi();
 
-  mqttTlsClient.setCACert(ROOT_CA_CERT);
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
 }

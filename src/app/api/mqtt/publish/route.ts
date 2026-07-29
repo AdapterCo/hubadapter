@@ -58,16 +58,10 @@ export async function POST(req: NextRequest) {
       signature: signCommand(commandSecret, action, amount, paymentId),
     });
 
-    const mqttApiToken = process.env.MQTT_API_TOKEN;
-    if (!mqttApiToken) {
-      return NextResponse.json({ error: "MQTT gateway is not configured" }, { status: 503 });
-    }
-
     const mqttRes = await fetch(process.env.MQTT_API_URL || "https://apimqtt.adapterco.com.br/publish", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${mqttApiToken}`,
       },
       body: JSON.stringify({ topic: esp32.mqttTopic, message }),
       signal: AbortSignal.timeout(10_000),

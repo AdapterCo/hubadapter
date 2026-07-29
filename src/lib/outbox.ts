@@ -18,16 +18,12 @@ export async function processOutboxBatch(limit = 20): Promise<{ sent: number; fa
 
   for (const message of messages) {
     try {
-      const mqttApiToken = process.env.MQTT_API_TOKEN
-      if (!mqttApiToken) throw new Error('MQTT_API_TOKEN is not configured')
-
       const response = await fetch(
         process.env.MQTT_API_URL || 'https://apimqtt.adapterco.com.br/publish',
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${mqttApiToken}`,
           },
           body: JSON.stringify({ topic: message.topic, message: message.payload }),
           signal: AbortSignal.timeout(10_000),
