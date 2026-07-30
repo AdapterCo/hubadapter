@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { decryptSecret } from '@/lib/crypto'
-import { verifyMercadoPagoSignature } from '@/lib/mercadopago'
 import { checkRateLimit, getRequestIp } from '@/lib/rate-limit'
 import { processOutboxBatch } from '@/lib/outbox'
 
@@ -104,7 +103,6 @@ async function handleNotification(
         id: true,
         active: true,
         mpAccessToken: true,
-        mpWebhookSecret: true,
       },
     })
 
@@ -132,32 +130,14 @@ async function handleNotification(
       return NextResponse.json({ ok: true, message: 'Payment already processed' }, { status: 200 })
     }
 
-    // 2. Validate signature if present (Webhook v2 mode)
-    const signature = req.headers.get('x-signature')
-    const webhookSecret = decryptSecret(client.mpWebhookSecret)
-
-    if (signature && webhookSecret) {
-      const isValidSig = verifyMercadoPagoSignature({
-        signature,
-        requestId: req.headers.get('x-request-id'),
-        dataId: rawPaymentId.toLowerCase(),
-        secret: webhookSecret,
-      })
-
-      if (!isValidSig) {
-        console.warn(`[webhook RECV] Signature validation failed for payment ${rawPaymentId}`)
-        return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 })
-      }
-    }
-
-    // 3. Get client's Mercado Pago Access Token
+    // 2. Get client's Mercado Pago Access Token
     const accessToken = decryptSecret(client.mpAccessToken)
     if (!accessToken) {
       console.warn(`[webhook RECV] Client ${client.id} has no mpAccessToken configured`)
       return NextResponse.json({ error: 'Mercado Pago token is not configured' }, { status: 409 })
     }
 
-    // 4. Secure Verification: Query official Mercado Pago API directly using client's token
+    // 3. 100% Official Verification: Query Mercado Pago API directly using client's Access Token
     const mpResponse = await fetch(
       `https://api.mercadopago.com/v1/payments/${encodeURIComponent(rawPaymentId)}`,
       {
@@ -190,7 +170,7 @@ async function handleNotification(
     const payment = (await mpResponse.json()) as MercadoPagoPayment
     const mpPaymentId = String(payment.id)
 
-    // 5. Strict Payment Validation: status must be approved, BRL currency, amount > 0
+    // 4. Strict Payment Validation: status must be approved, BRL currency, amount > 0
     if (
       mpPaymentId !== rawPaymentId ||
       payment.status.toLowerCase() !== 'approved' ||
@@ -277,7 +257,7 @@ async function handleNotification(
       serialNumber: esp32.serialNumber,
     })
 
-    // 6. Atomic Transaction: Record Payment, Increment ESP32 Credits, Queue Outbox MQTT Message
+    // 5. Atomic Transaction: Record Payment, Increment ESP32 Credits, Queue Outbox MQTT Message
     await prisma.$transaction(async (tx) => {
       const doubleCheck = await tx.payment.findUnique({
         where: { mpPaymentId },
