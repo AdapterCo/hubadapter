@@ -33,7 +33,6 @@ async function getClientData(clientId: string) {
       where: { id: clientId },
       select: {
         mpAccessToken: true,
-        mpWebhookSecret: true,
         mpTokenValid: true,
         mpTokenCheckedAt: true,
       },
@@ -45,9 +44,7 @@ async function getClientData(clientId: string) {
     paymentsToday,
     totalRevenue: Number(revenueResult._sum.amount ?? 0),
     onlineDevices,
-    mercadoPagoConfigured: Boolean(
-      clientSettings?.mpAccessToken && clientSettings.mpWebhookSecret
-    ),
+    mercadoPagoConfigured: Boolean(clientSettings?.mpAccessToken),
     mercadoPagoTokenInvalid: clientSettings?.mpTokenValid === false,
   }
 }
@@ -75,8 +72,7 @@ export default async function PainelPage() {
         <div className="alert alert-warning" style={{ marginBottom: '20px' }}>
           <span>⚠️</span>
           <div>
-            Configure o Access Token e a assinatura secreta do webhook do Mercado Pago para
-            validar pagamentos com segurança.{' '}
+            Configure o Access Token do Mercado Pago para consultar e validar pagamentos com segurança.{' '}
             <Link href="/configuracoes">Abrir configurações</Link>
           </div>
         </div>
