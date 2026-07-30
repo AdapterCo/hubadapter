@@ -88,7 +88,7 @@ export default function PagamentosPage() {
                   <th>Valor</th>
                   <th>Método</th>
                   <th>Status</th>
-                  <th>ESP32</th>
+                  <th>Dispositivo</th>
                   <th>MP ID</th>
                 </tr>
               </thead>

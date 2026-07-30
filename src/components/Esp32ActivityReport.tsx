@@ -12,7 +12,6 @@ export default function Esp32ActivityReport({
   serialNumber,
   lastSeen,
   online,
-  mqttTopic,
   credits,
 }: Esp32Props) {
   const lastSeenDate = lastSeen ? new Date(lastSeen) : null
@@ -53,7 +52,7 @@ export default function Esp32ActivityReport({
         }}
       >
         <div style={{ fontWeight: 800, fontSize: '15px', color: 'var(--text-primary)' }}>
-          📊 Relatório de Atividade & Uptime do ESP32 ({serialNumber})
+          📊 Relatório de Atividade do Dispositivo ({serialNumber})
         </div>
         <div>
           {isStrictOnline ? (
@@ -73,12 +72,12 @@ export default function Esp32ActivityReport({
             border: '1px solid var(--border)',
           }}
         >
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Status de Comunicação</div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Status de Conexão</div>
           <div style={{ fontSize: '15px', fontWeight: 700, color: isStrictOnline ? 'var(--success)' : 'var(--danger)', marginTop: '4px' }}>
-            {isStrictOnline ? '🟢 Ativo & Respondendo' : '🔴 Inativo / Desconectado'}
+            {isStrictOnline ? '🟢 Ativo & Operacional' : '🔴 Inativo / Desconectado'}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            {formatTimeAgo(diffSeconds)}
+            Último sinal: {formatTimeAgo(diffSeconds)}
           </div>
         </div>
 
@@ -90,12 +89,12 @@ export default function Esp32ActivityReport({
             border: '1px solid var(--border)',
           }}
         >
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Frequência de Heartbeat</div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Sincronização Ativa</div>
           <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--accent-light)', marginTop: '4px' }}>
-            A cada 30 segundos
+            Em tempo real
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            HTTPS / MQTT (Porta 1883)
+            Canal Criptografado
           </div>
         </div>
 
@@ -107,12 +106,12 @@ export default function Esp32ActivityReport({
             border: '1px solid var(--border)',
           }}
         >
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Proteção de Estorno Ativa</div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Garantia de Entrega</div>
           <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--success)', marginTop: '4px' }}>
-            ⚡ Ponta a Ponta (ACK)
+            ⚡ Proteção Automática
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Estorna se sem resposta em 4.5s
+            Estorno instantâneo se desconectado
           </div>
         </div>
       </div>

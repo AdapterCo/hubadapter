@@ -6,7 +6,7 @@ import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
-// Strict 90 seconds online cutoff (ESP32 sends heartbeats every 30s)
+// Strict 90 seconds online cutoff (Device sends heartbeats every 30s)
 const ONLINE_THRESHOLD_MS = 90 * 1000
 
 async function getClientData(clientId: string) {
@@ -96,7 +96,7 @@ export default async function PainelPage() {
         </div>
         <div className="stat-card">
           <div className="stat-icon blue">📡</div>
-          <div><div className="stat-value">{totalEsps}</div><div className="stat-label">ESP32s</div></div>
+          <div><div className="stat-value">{totalEsps}</div><div className="stat-label">Dispositivos</div></div>
         </div>
         <div className="stat-card">
           <div className="stat-icon green">🟢</div>
@@ -139,7 +139,7 @@ export default async function PainelPage() {
                   </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     <div style={{ flex: 1, background: 'var(--bg-secondary)', borderRadius: '8px', padding: '10px 12px' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ESP32s</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Dispositivos</div>
                       <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>{m.esps.length}</div>
                     </div>
                     <div style={{ flex: 1, background: 'var(--bg-secondary)', borderRadius: '8px', padding: '10px 12px' }}>

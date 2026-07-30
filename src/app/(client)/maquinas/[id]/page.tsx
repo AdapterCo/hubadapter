@@ -59,12 +59,10 @@ export default function MachineDetailPage() {
 
   useEffect(() => {
     loadMachine()
-    // Refresh machine status every 15 seconds automatically
     const interval = setInterval(loadMachine, 15000)
     return () => clearInterval(interval)
   }, [loadMachine])
 
-  // Open binding modal and fetch MP devices securely from backend
   async function openBindModal(esp: Esp32) {
     setActiveEsp(esp)
     setLoadingMp(true)
@@ -91,7 +89,6 @@ export default function MachineDetailPage() {
     }
   }
 
-  // Bind selected MP card machine to ESP32 via backend
   async function handleBind(mpPosId: string | null, mpPosName: string | null) {
     if (!activeEsp) return
     setBinding(true)
@@ -121,7 +118,6 @@ export default function MachineDetailPage() {
     }
   }
 
-  // Active Ping / Credit Test with real-time response check (ACK Verification)
   async function sendMqttCommand(esp32Id: string, action: 'ping' | 'credit_test') {
     setTestingEspId(esp32Id)
     setTestFeedback(null)
@@ -143,13 +139,12 @@ export default function MachineDetailPage() {
         setTestFeedback({
           espId: esp32Id,
           type: 'error',
-          message: `Falha ao enviar comando MQTT: ${errData.error || 'Erro desconhecido'}`,
+          message: `Falha ao enviar comando ao dispositivo: ${errData.error || 'Erro desconhecido'}`,
         })
         setTestingEspId(null)
         return
       }
 
-      // If action is ping, poll status for 3 seconds to check if ESP32 ACK heartbeat was received
       if (action === 'ping') {
         let ackReceived = false
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -170,20 +165,20 @@ export default function MachineDetailPage() {
           setTestFeedback({
             espId: esp32Id,
             type: 'success',
-            message: '🟢 ESP32 respondeu ao Ping! O dispositivo está ONLINE e conectado.',
+            message: '🟢 Dispositivo respondeu ao Teste de Conexão! O equipamento está ONLINE e pronto.',
           })
         } else {
           setTestFeedback({
             espId: esp32Id,
             type: 'error',
-            message: '🔴 O ESP32 NÃO respondeu ao Ping. Verifique a alimentação, Wi-Fi e conexão do dispositivo.',
+            message: '🔴 O Dispositivo NÃO respondeu ao Teste. Verifique a alimentação e conexão com a internet.',
           })
         }
       } else {
         setTestFeedback({
           espId: esp32Id,
           type: 'success',
-          message: '⚡ Comando de teste de crédito (+ 1 crédito inteiro) enviado ao dispositivo via MQTT com sucesso!',
+          message: '⚡ Comando de teste de crédito (+ 1 crédito inteiro) enviado ao dispositivo com sucesso!',
         })
         loadMachine()
       }
@@ -191,7 +186,7 @@ export default function MachineDetailPage() {
       setTestFeedback({
         espId: esp32Id,
         type: 'error',
-        message: 'Erro de comunicação com o servidor ao enviar comando.',
+        message: 'Erro de comunicação ao testar dispositivo.',
       })
     } finally {
       setTestingEspId(null)
@@ -227,13 +222,13 @@ export default function MachineDetailPage() {
         <a href="/maquinas" className="btn btn-secondary">⬅️ Voltar</a>
       </div>
 
-      <div className="section-title">📡 Dispositivo ESP32 (IDMAQ) Vinculado</div>
+      <div className="section-title">📡 Dispositivo (IDMAQ) Vinculado</div>
 
       {machine.esps.length === 0 ? (
         <div className="card">
           <div className="empty-state">
             <div className="empty-icon">📡</div>
-            <p>Nenhum ESP32 vinculado a esta máquina.</p>
+            <p>Nenhum dispositivo vinculado a esta máquina.</p>
           </div>
         </div>
       ) : (
@@ -244,9 +239,6 @@ export default function MachineDetailPage() {
                 <div>
                   <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
                     🏷️ IDMAQ: {esp.serialNumber}
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    Tópico MQTT: <code style={{ color: 'var(--accent-light)', fontFamily: 'monospace' }}>{esp.mqttTopic}</code>
                   </div>
                 </div>
 
@@ -274,7 +266,7 @@ export default function MachineDetailPage() {
                       </div>
                     ) : (
                       <div style={{ fontSize: '13px', color: 'var(--warning)', marginTop: '4px' }}>
-                        ⚠️ Nenhuma máquina de cartão do Mercado Pago vinculada a este ESP32
+                        ⚠️ Nenhuma máquina de cartão do Mercado Pago vinculada a este dispositivo
                       </div>
                     )}
                   </div>
@@ -325,7 +317,7 @@ export default function MachineDetailPage() {
                     disabled={testingEspId === esp.id}
                     onClick={() => sendMqttCommand(esp.id, 'ping')}
                   >
-                    {testingEspId === esp.id ? <span className="loading-spinner" /> : '📡 Testar Conexão (Ping)'}
+                    {testingEspId === esp.id ? <span className="loading-spinner" /> : '📡 Testar Conexão'}
                   </button>
                   <button
                     className="btn btn-success btn-sm"
@@ -351,7 +343,7 @@ export default function MachineDetailPage() {
             </div>
 
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              Vinculando ao ESP32 <strong style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{activeEsp.serialNumber}</strong>. As consultas ao endpoint de terminais do Mercado Pago são processadas no backend.
+              Vinculando ao Dispositivo <strong style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{activeEsp.serialNumber}</strong>.
             </p>
 
             {loadingMp ? (

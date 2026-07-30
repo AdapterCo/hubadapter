@@ -5,30 +5,32 @@ import { useState, useEffect, useCallback } from 'react'
 interface Esp32 {
   id: string
   serialNumber: string
-  mqttTopic: string
   online: boolean
   lastSeen: string | null
   credits: number
-  createdAt: string
 }
 
 interface Machine {
   id: string
   name: string
   location: string | null
-  createdAt: string
   esps: Esp32[]
 }
 
 export default function MaquinasPage() {
   const [machines, setMachines] = useState<Machine[]>([])
   const [loading, setLoading] = useState(true)
-  const [showMachineModal, setShowMachineModal] = useState(false)
+
+  // Modals state
+  const [showAddMachine, setShowAddMachine] = useState(false)
   const [showEspModal, setShowEspModal] = useState<string | null>(null)
-  const [machineForm, setMachineForm] = useState({ name: '', location: '' })
-  const [espForm, setEspForm] = useState({ serialNumber: '' })
+
+  // Form states
+  const [machineName, setMachineName] = useState('')
+  const [machineLocation, setMachineLocation] = useState('')
+  const [espSerial, setEspSerial] = useState('')
+
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
 
   const load = useCallback(async () => {
     const res = await fetch('/api/machines')
@@ -41,69 +43,58 @@ export default function MaquinasPage() {
 
   async function createMachine(e: React.FormEvent) {
     e.preventDefault()
+    if (!machineName) return
     setSaving(true)
-    setError('')
-    const res = await fetch('/api/machines', {
+    await fetch('/api/machines', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(machineForm),
+      body: JSON.stringify({ name: machineName, location: machineLocation }),
     })
-    if (res.ok) {
-      setShowMachineModal(false)
-      setMachineForm({ name: '', location: '' })
-      load()
-    } else {
-      const d = await res.json()
-      setError(d.error)
-    }
     setSaving(false)
+    setShowAddMachine(false)
+    setMachineName('')
+    setMachineLocation('')
+    load()
   }
 
   async function addEsp32(machineId: string) {
+    if (!espSerial) return
     setSaving(true)
-    setError('')
     const res = await fetch('/api/esp32', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ machineId, serialNumber: espForm.serialNumber }),
+      body: JSON.stringify({ machineId, serialNumber: espSerial }),
     })
-    if (res.ok) {
-      setShowEspModal(null)
-      setEspForm({ serialNumber: '' })
-      load()
-    } else {
+    if (!res.ok) {
       const d = await res.json()
-      setError(d.error)
+      alert(d.error || 'Erro ao vincular dispositivo')
     }
     setSaving(false)
+    setShowEspModal(null)
+    setEspSerial('')
+    load()
   }
 
   async function deleteEsp32(id: string) {
-    if (!confirm('Remover este ESP32?')) return
+    if (!confirm('Remover este dispositivo?')) return
     await fetch(`/api/esp32/${id}`, { method: 'DELETE' })
     load()
   }
 
   async function deleteMachine(id: string) {
-    if (!confirm('Excluir esta máquina e todos os ESP32s vinculados?')) return
+    if (!confirm('Excluir esta máquina e todos os dispositivos vinculados?')) return
     await fetch(`/api/machines/${id}`, { method: 'DELETE' })
     load()
-  }
-
-  async function sendMqtt(esp32Id: string, action: 'ping' | 'credit_test') {
-    await fetch('/api/mqtt/publish', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ esp32Id, action }),
-    })
-    alert('Comando enviado')
   }
 
   return (
     <div className="page-content">
       <div className="page-header">
-        <div><h1>Minhas Máquinas</h1><p>{machines.length} máquinas cadastradas</p></div>
-        <button id="btn-new-machine" className="btn btn-primary" onClick={() => setShowMachineModal(true)}>
+        <div>
+          <h1>Minhas Máquinas</h1>
+          <p>Gerencie suas máquinas e dispositivos cadastrados</p>
+        </div>
+        <button id="btn-add-machine" className="btn btn-primary" onClick={() => setShowAddMachine(true)}>
           ➕ Nova Máquina
         </button>
       </div>
@@ -111,69 +102,71 @@ export default function MaquinasPage() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: '60px' }}><span className="loading-spinner" /></div>
       ) : machines.length === 0 ? (
-        <div className="empty-state">
+        <div className="empty-state card">
           <div className="empty-icon">🖥️</div>
           <p>Nenhuma máquina cadastrada ainda.</p>
-          <button className="btn btn-primary" onClick={() => setShowMachineModal(true)}>Criar primeira máquina</button>
+          <button className="btn btn-primary" onClick={() => setShowAddMachine(true)}>Cadastrar primeira máquina</button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {machines.map(m => (
             <div key={m.id} className="card">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)' }}>🖥️ {m.name}</div>
-                  {m.location && <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>📍 {m.location}</div>}
+                  <div style={{ fontWeight: 800, fontSize: '18px', color: 'var(--text-primary)' }}>🖥️ {m.name}</div>
+                  {m.location && <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>📍 {m.location}</div>}
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="btn btn-secondary btn-sm" onClick={() => setShowEspModal(m.id)}>➕ Adicionar ESP32</button>
-                  <button className="btn btn-danger btn-sm" onClick={() => deleteMachine(m.id)}>🗑️</button>
+                  <a href={`/maquinas/${m.id}`} className="btn btn-secondary btn-sm">👁️ Detalhes</a>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setShowEspModal(m.id)}>➕ Adicionar Dispositivo</button>
+                  <button className="btn btn-danger btn-sm" onClick={() => deleteMachine(m.id)}>🗑️ Excluir</button>
                 </div>
               </div>
 
+              <div style={{ height: '1px', background: 'var(--border)', margin: '16px 0' }} />
+
               {m.esps.length === 0 ? (
-                <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', background: 'var(--bg-secondary)', borderRadius: '8px' }}>
-                  Nenhum ESP32 vinculado ainda
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                  Nenhum dispositivo vinculado ainda
                 </div>
               ) : (
-                <div className="table-wrapper">
-                  <table>
-                    <thead>
-                      <tr><th>Serial</th><th>Tópico MQTT</th><th>Status</th><th>Créditos</th><th>Último contato</th><th>Ações</th></tr>
-                    </thead>
-                    <tbody>
-                      {m.esps.map(e => (
-                        <tr key={e.id}>
-                          <td className="strong" style={{ fontFamily: 'monospace' }}>{e.serialNumber}</td>
-                          <td style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--accent-light)' }}>{e.mqttTopic}</td>
-                          <td>
-                            {e.online ? (
-                              <span className="badge online"><span className="pulse" style={{ marginRight: '4px' }} />Online</span>
-                            ) : (
-                              <span className="badge offline">Offline</span>
-                            )}
-                          </td>
-                          <td className="strong" style={{ color: 'var(--accent-light)' }}>{e.credits.toFixed(2)}</td>
-                          <td style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                            {e.lastSeen ? new Date(e.lastSeen).toLocaleString('pt-BR') : 'Nunca'}
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                              <button
-                                className="btn btn-secondary btn-sm"
-                                title="Enviar ping"
-                                onClick={() => sendMqtt(e.id, 'ping')}
-                              >
-                                📡 Ping
-                              </button>
-                              <a href={`/maquinas/${m.id}?esp=${e.id}`} className="btn btn-secondary btn-sm">Ver</a>
-                              <button className="btn btn-danger btn-sm" onClick={() => deleteEsp32(e.id)}>🗑️</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    📡 Dispositivos vinculados:
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {m.esps.map(e => (
+                      <div
+                        key={e.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          background: 'var(--bg-secondary)',
+                          borderRadius: '8px',
+                          padding: '10px 14px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          {e.online ? (
+                            <span className="badge online"><span className="pulse" /> Online</span>
+                          ) : (
+                            <span className="badge offline">Offline</span>
+                          )}
+                          <span style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--text-primary)' }}>
+                            IDMAQ: {e.serialNumber}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Créditos: <strong style={{ color: 'var(--accent-light)' }}>{Number(e.credits).toFixed(0)}</strong>
+                          </div>
+                          <button className="btn btn-danger btn-sm" onClick={() => deleteEsp32(e.id)}>🗑️</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -182,63 +175,70 @@ export default function MaquinasPage() {
       )}
 
       {/* Modal: Nova Máquina */}
-      {showMachineModal && (
-        <div className="modal-overlay" onClick={() => setShowMachineModal(false)}>
+      {showAddMachine && (
+        <div className="modal-overlay" onClick={() => setShowAddMachine(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">🖥️ Nova Máquina</span>
-              <button className="modal-close" onClick={() => setShowMachineModal(false)}>×</button>
+              <button className="modal-close" onClick={() => setShowAddMachine(false)}>×</button>
             </div>
-            {error && <div className="alert alert-error">⚠️ {error}</div>}
             <form onSubmit={createMachine}>
               <div className="form-group">
-                <label className="form-label">Nome da máquina</label>
-                <input id="machine-name" type="text" className="form-input" placeholder="Ex: Máquina Loja Centro" value={machineForm.name} onChange={e => setMachineForm(f => ({ ...f, name: e.target.value }))} required />
+                <label className="form-label">Nome da Máquina</label>
+                <input
+                  id="machine-name"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Máquina 01 - Loja Centro"
+                  value={machineName}
+                  onChange={e => setMachineName(e.target.value)}
+                  required
+                />
               </div>
               <div className="form-group">
                 <label className="form-label">Localização (opcional)</label>
-                <input id="machine-location" type="text" className="form-input" placeholder="Ex: Rua das Flores, 123" value={machineForm.location} onChange={e => setMachineForm(f => ({ ...f, location: e.target.value }))} />
+                <input
+                  id="machine-location"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Av. Principal, 100"
+                  value={machineLocation}
+                  onChange={e => setMachineLocation(e.target.value)}
+                />
               </div>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowMachineModal(false)}>Cancelar</button>
-                <button id="btn-save-machine" type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? <span className="loading-spinner" /> : '✅'} Criar
-                </button>
-              </div>
+              <button id="btn-save-machine" type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? <span className="loading-spinner" /> : '💾'} Criar Máquina
+              </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Modal: Adicionar ESP32 */}
+      {/* Modal: Adicionar Dispositivo */}
       {showEspModal && (
         <div className="modal-overlay" onClick={() => setShowEspModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title">📡 Adicionar ESP32</span>
+              <span className="modal-title">📡 Adicionar Dispositivo</span>
               <button className="modal-close" onClick={() => setShowEspModal(null)}>×</button>
             </div>
-            {error && <div className="alert alert-error">⚠️ {error}</div>}
             <div>
               <div className="form-group">
-                <label className="form-label">Número de série do ESP32</label>
+                <label className="form-label">Código do Dispositivo (IDMAQ)</label>
                 <input
                   id="esp32-serial"
                   type="text"
                   className="form-input"
-                  placeholder="Ex: ESP32-ABC123"
-                  value={espForm.serialNumber}
-                  onChange={e => setEspForm({ serialNumber: e.target.value })}
+                  placeholder="Ex: ADP-001"
+                  value={espSerial}
+                  onChange={e => setEspSerial(e.target.value)}
                   style={{ fontFamily: 'monospace' }}
                 />
-                <span className="form-hint">Este serial é gravado no firmware do seu ESP32</span>
+                <span className="form-hint">Este código está impresso na etiqueta do seu dispositivo</span>
               </div>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowEspModal(null)}>Cancelar</button>
-                <button id="btn-save-esp32" className="btn btn-primary" disabled={saving} onClick={() => addEsp32(showEspModal)}>
-                  {saving ? <span className="loading-spinner" /> : '✅'} Vincular
-                </button>
-              </div>
+              <button id="btn-save-esp32" className="btn btn-primary" disabled={saving} onClick={() => addEsp32(showEspModal)}>
+                {saving ? <span className="loading-spinner" /> : '🔗'} Vincular Dispositivo
+              </button>
             </div>
           </div>
         </div>
