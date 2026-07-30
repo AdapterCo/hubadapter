@@ -4,11 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { decryptSecret } from '@/lib/crypto'
 import { refundMercadoPagoPayment } from '@/lib/mercadopago'
 import { checkRateLimit, getRequestIp } from '@/lib/rate-limit'
-import { processOutboxBatch } from '@/lib/outbox'
 
 export const dynamic = 'force-dynamic'
-
-const ONLINE_THRESHOLD_MS = 90 * 1000 // 90 seconds timeout for ESP32 presence
 
 interface MercadoPagoPayment {
   id: number | string
@@ -253,11 +250,50 @@ async function handleNotification(
       return NextResponse.json({ error: 'Payment device not found' }, { status: 422 })
     }
 
-    // 6. REQUIREMENT 2: Check ESP32 Online Status. If OFFLINE (>90s), AUTO-REFUND IMMEDIATELY!
-    const isEspOnline = esp32.lastSeen && (Date.now() - new Date(esp32.lastSeen).getTime() <= ONLINE_THRESHOLD_MS)
+    // 6. SYNCHRONOUS END-TO-END ACK VERIFICATION:
+    // Send MQTT credit payload directly to ESP32 topic & wait up to 4.5 seconds for HTTP ACK from ESP32!
+    const payload = JSON.stringify({
+      action: 'credit',
+      amount: creditsToGrant,
+      paymentId: mpPaymentId,
+      serialNumber: esp32.serialNumber,
+    })
 
-    if (!isEspOnline) {
-      console.warn(`[webhook RECV] ESP32 ${esp32.serialNumber} is OFFLINE (>90s). Executing instant auto-refund for payment ${mpPaymentId}...`)
+    console.log(`[webhook RECV] Direct MQTT credit dispatching to topic [${esp32.mqttTopic}] for payment ${mpPaymentId}...`)
+
+    // Publish MQTT credit message immediately
+    await fetch(process.env.MQTT_API_URL || 'https://apimqtt.adapterco.com.br/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: esp32.mqttTopic, message: payload }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch((err) => {
+      console.warn('[webhook RECV] MQTT publish warning:', err)
+    })
+
+    // Poll DB for up to 4.5 seconds to verify if ESP32 ACK arrived for this paymentId
+    let ackReceived = false
+    const ackDeadline = Date.now() + 4500
+
+    while (Date.now() < ackDeadline) {
+      await new Promise(r => setTimeout(r, 300))
+      const checkEsp = await prisma.esp32.findUnique({
+        where: { id: esp32.id },
+        select: { lastAckPaymentId: true, lastAckAt: true },
+      })
+      if (
+        checkEsp?.lastAckPaymentId === mpPaymentId &&
+        checkEsp?.lastAckAt &&
+        Date.now() - new Date(checkEsp.lastAckAt).getTime() <= 6000
+      ) {
+        ackReceived = true
+        break
+      }
+    }
+
+    // 7. IF ESP32 DID NOT ACKNOWLEDGE (Unplugged/Offline/Unreachable) -> INSTANT AUTO-REFUND!
+    if (!ackReceived) {
+      console.warn(`[webhook RECV] ❌ END-TO-END ACK TIMEOUT! ESP32 ${esp32.serialNumber} failed to acknowledge payment ${mpPaymentId}. Executing instant auto-refund...`)
 
       const refundResult = await refundMercadoPagoPayment({
         paymentId: mpPaymentId,
@@ -272,7 +308,7 @@ async function handleNotification(
             mpPaymentId,
             amount: new Prisma.Decimal(rawAmount),
             status: 'refunded',
-            externalRef: externalReference || deviceSerial || posId || 'auto-refund-offline',
+            externalRef: externalReference || deviceSerial || posId || 'auto-refund-no-ack',
           },
         })
 
@@ -284,7 +320,7 @@ async function handleNotification(
               mpPaymentId,
               status: 'refunded',
               amount: rawAmount,
-              reason: 'ESP32 offline por mais de 90 segundos. Pagamento estornado automaticamente ao cliente.',
+              reason: 'ESP32 não confirmou o recebimento da mensagem (sem resposta ponta a ponta). Pagamento estornado automaticamente.',
               refundResult,
               idmaq: esp32.serialNumber,
             }),
@@ -292,22 +328,16 @@ async function handleNotification(
         })
       })
 
-      console.log(`[webhook RECV] AUTO-REFUND EXECUTED! Payment ${mpPaymentId} refunded. ESP32 ${esp32.serialNumber} was OFFLINE.`)
+      console.log(`[webhook RECV] 💸 INSTANT REFUND COMPLETE! Payment ${mpPaymentId} refunded via Mercado Pago. ESP32 ${esp32.serialNumber} was unreachable.`)
       return NextResponse.json({
         ok: true,
-        message: 'ESP32 offline. Payment refunded automatically.',
+        message: 'ESP32 did not acknowledge credit delivery. Payment refunded automatically.',
         refunded: true,
       }, { status: 200 })
     }
 
-    // 7. ESP32 is ONLINE: Grant Integer Credits (e.g. 1.02 -> 1) & Queue Outbox MQTT Message
+    // 8. ESP32 ACKNOWLEDGED RECEPTION (END-TO-END CONFIRMED): Record Payment, Increment Credits & Telemetry
     const amountDecimal = new Prisma.Decimal(creditsToGrant)
-    const payload = JSON.stringify({
-      action: 'credit',
-      amount: creditsToGrant,
-      paymentId: mpPaymentId,
-      serialNumber: esp32.serialNumber,
-    })
 
     await prisma.$transaction(async (tx) => {
       const doubleCheck = await tx.payment.findUnique({
@@ -316,7 +346,7 @@ async function handleNotification(
       })
       if (doubleCheck) return
 
-      const storedPayment = await tx.payment.create({
+      await tx.payment.create({
         data: {
           clientId: client.id,
           esp32Id: esp32.id,
@@ -335,15 +365,6 @@ async function handleNotification(
         },
       })
 
-      await tx.outboxMessage.create({
-        data: {
-          paymentId: storedPayment.id,
-          esp32Id: esp32.id,
-          topic: esp32.mqttTopic,
-          payload,
-        },
-      })
-
       await tx.telemetryEvent.create({
         data: {
           esp32Id: esp32.id,
@@ -355,16 +376,15 @@ async function handleNotification(
             creditedAmount: creditsToGrant,
             terminalSerial: deviceSerial || posId,
             idmaq: esp32.serialNumber,
+            ackConfirmed: true,
           }),
         },
       })
     })
 
-    console.log(`[webhook RECV] SUCCESS! Payment ${mpPaymentId} (R$ ${rawAmount}) credited ${creditsToGrant} integer credit(s) to ESP32 ${esp32.serialNumber}`)
+    console.log(`[webhook RECV] 🎉 END-TO-END ACK CONFIRMED! Payment ${mpPaymentId} (R$ ${rawAmount}) credited ${creditsToGrant} credit(s) to ESP32 ${esp32.serialNumber}`)
 
-    // Immediately trigger outbox worker batch to publish MQTT credit to ESP32
-    await processOutboxBatch(5)
-    return NextResponse.json({ ok: true, paymentId: mpPaymentId, credits: creditsToGrant }, { status: 200 })
+    return NextResponse.json({ ok: true, paymentId: mpPaymentId, credits: creditsToGrant, ack: true }, { status: 200 })
   } catch (error) {
     console.error('[webhook RECV] Error processing notification', error)
     return NextResponse.json({ error: 'Temporary processing failure' }, { status: 500 })

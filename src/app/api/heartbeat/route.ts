@@ -6,10 +6,12 @@ import { z } from 'zod'
 const heartbeatSchema = z.object({
   idmaq: z.string().trim().min(1).max(64).optional(),
   serialNumber: z.string().trim().min(1).max(64).optional(),
+  paymentId: z.string().trim().max(128).optional(),
+  ack: z.boolean().optional(),
 }).strict().refine((data) => data.idmaq || data.serialNumber)
 
 // POST /api/heartbeat
-// Heartbeat endpoint for ESP32 devices to report online status
+// Heartbeat & Synchronous Payment ACK endpoint for ESP32 devices
 export async function POST(req: NextRequest) {
   try {
     if (Number(req.headers.get('content-length') || 0) > 4 * 1024) {
@@ -27,7 +29,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json({ error: 'Invalid heartbeat payload' }, { status: 400 })
     }
-    const { idmaq, serialNumber } = parsed.data
+    const { idmaq, serialNumber, paymentId, ack } = parsed.data
     const target = String(idmaq || serialNumber || '').trim().toUpperCase()
 
     if (!target) {
@@ -42,11 +44,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ESP32 not found' }, { status: 404 })
     }
 
+    const updateData: {
+      lastSeen: Date
+      lastAckPaymentId?: string
+      lastAckAt?: Date
+    } = {
+      lastSeen: new Date(),
+    }
+
+    if (paymentId || ack) {
+      updateData.lastAckPaymentId = paymentId ? String(paymentId) : 'ack'
+      updateData.lastAckAt = new Date()
+      console.log(`[heartbeat ACK] ESP32 ${target} acknowledged payment: ${paymentId}`)
+    }
+
     const updated = await prisma.esp32.update({
       where: { id: esp32.id },
-      data: {
-        lastSeen: new Date(),
-      },
+      data: updateData,
     })
 
     return NextResponse.json({
@@ -54,6 +68,7 @@ export async function POST(req: NextRequest) {
       idmaq: target,
       online: true,
       lastSeen: updated.lastSeen,
+      lastAckPaymentId: updated.lastAckPaymentId,
     })
   } catch (err) {
     console.error('[heartbeat POST]', err)

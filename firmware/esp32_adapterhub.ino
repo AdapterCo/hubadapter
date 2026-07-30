@@ -1,11 +1,13 @@
 /*
   =============================================================================
-  AdapterHub — Código do Firmware ESP32
+  AdapterHub — Código do Firmware ESP32 (Com protocolo ACK de confirmação ponta a ponta)
   =============================================================================
   Descrição:
     Este firmware conecta o ESP32 ao Wi-Fi, reporta o heartbeat para o servidor
     hub.adapterco.com.br e conecta ao MQTT para receber liberação de créditos.
     Ele escuta no tópico configurado como o seu IDMAQ (ex: ADP-001).
+    Ao receber um comando de crédito, ele responde IMEDIATAMENTE com um ACK HTTP
+    ao servidor para confirmação de entrega ponta a ponta antes de liberar o relé.
 
   Bibliotecas necessárias (Instalar no Arduino IDE / PlatformIO):
     - PubSubClient (por Nick O'Leary)
@@ -28,11 +30,11 @@
 // CONFIGURAÇÕES DO DISPOSITIVO & REDE
 // =============================================================================
 // Código IDMAQ impresso no dispositivo (ex: ADP-001, ADP-002...)
-const char* IDMAQ = "ADP-002";
+const char* IDMAQ = "ADP-001";
 
 // Credenciais da rede Wi-Fi
-const char* WIFI_SSID     = "Adapter CO";
-const char* WIFI_PASSWORD = "Home211314.";
+const char* WIFI_SSID     = "SUA_REDE_WIFI";
+const char* WIFI_PASSWORD = "SUA_SENHA_WIFI";
 
 // Servidor Web & Webhook do AdapterHub
 const char* HUB_SERVER_URL = "https://hub.adapterco.com.br";
@@ -88,27 +90,31 @@ void markProcessed(const String& paymentId) {
 }
 
 // =============================================================================
-// FUNÇÃO DE ENVIO DE HEARTBEAT PARA O PAINEL WEB (HTTPS)
+// FUNÇÃO DE ENVIO DE HEARTBEAT E ACK PONTA A PONTA PARA O PAINEL WEB (HTTPS)
 // =============================================================================
-void sendServerHeartbeat() {
+void sendServerHeartbeat(const String& paymentId = "") {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     String url = String(HUB_SERVER_URL) + "/api/heartbeat";
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
 
-    StaticJsonDocument<128> doc;
+    StaticJsonDocument<256> doc;
     doc["idmaq"] = IDMAQ;
+    if (paymentId.length() > 0) {
+      doc["paymentId"] = paymentId;
+      doc["ack"] = true;
+    }
 
     String jsonBody;
     serializeJson(doc, jsonBody);
 
     int httpCode = http.POST(jsonBody);
     if (httpCode > 0) {
-      Serial.print("💚 Heartbeat enviado ao servidor. HTTP Code: ");
+      Serial.print("💚 Heartbeat/ACK enviado ao servidor. HTTP Code: ");
       Serial.println(httpCode);
     } else {
-      Serial.print("⚠️ Erro ao enviar Heartbeat ao servidor: ");
+      Serial.print("⚠️ Erro ao enviar Heartbeat/ACK ao servidor: ");
       Serial.println(http.errorToString(httpCode));
     }
     http.end();
@@ -126,7 +132,7 @@ void triggerCredit(float amount) {
 
   int pulses = 1;
   if (PULSE_PER_BRL && amount >= 1.0) {
-    pulses = (int)amount; // 1 pulso por R$ 1,00
+    pulses = (int)amount; // 1 pulso por R$ 1,00 inteiros
   }
 
   for (int i = 0; i < pulses; i++) {
@@ -148,7 +154,7 @@ void triggerCredit(float amount) {
 }
 
 // =============================================================================
-// CALLBACK MQTT (Processa mensagens recebidas)
+// CALLBACK MQTT (Processa mensagens recebidas com confirmação ACK)
 // =============================================================================
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("📩 Mensagem recebida no tópico [");
@@ -182,7 +188,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Se for comando de ping, responde imediatamente com heartbeat HTTP e pisca LED
   if (strcmp(action, "ping") == 0) {
     Serial.println("📡 Ping recebido do servidor! Confirmando presença...");
-    sendServerHeartbeat();
+    sendServerHeartbeat(paymentIdValue ? String(paymentIdValue) : "ping-ack");
     for (int i = 0; i < 3; i++) {
       digitalWrite(LED_STATUS_PIN, HIGH);
       delay(100);
@@ -201,13 +207,20 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String paymentId(paymentIdValue);
   if (wasProcessed(paymentId)) {
     Serial.println("Comando ignorado: paymentId já processado anteriormente.");
+    // Envia o ACK mesmo se já processado para destravar o servidor em caso de reenvio
+    sendServerHeartbeat(paymentId);
     return;
   }
 
   if (strcmp(action, "credit") == 0 || strcmp(action, "credit_test") == 0) {
-    triggerCredit(amount > 0 ? amount : 1.0);
+    // 1. DISPARA O ACK PONTA A PONTA IMEDIATAMENTE PARA CONFIRMAR AO SERVIDOR QUE O ESP32 RECEBEU!
+    sendServerHeartbeat(paymentId);
+    
+    // 2. Marca como processado para garantir idempotência
     markProcessed(paymentId);
-    sendServerHeartbeat(); // Atualiza presença no servidor após liberar crédito
+
+    // 3. Aciona os pulsos do relé
+    triggerCredit(amount > 0 ? amount : 1.0);
   }
 }
 
