@@ -38,3 +38,37 @@ export function verifyMercadoPagoSignature({
   const receivedBuffer = Buffer.from(v1)
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
 }
+
+export async function refundMercadoPagoPayment({
+  paymentId,
+  accessToken,
+}: {
+  paymentId: string | number
+  accessToken: string
+}): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const res = await fetch(
+      `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': `refund-${paymentId}`,
+        },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10_000),
+      }
+    )
+
+    if (res.ok) {
+      const data = await res.json()
+      return { success: true, data }
+    } else {
+      const errText = await res.text()
+      return { success: false, error: errText }
+    }
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Connection error' }
+  }
+}

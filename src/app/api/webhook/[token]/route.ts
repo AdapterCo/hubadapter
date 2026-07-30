@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { decryptSecret } from '@/lib/crypto'
+import { refundMercadoPagoPayment } from '@/lib/mercadopago'
 import { checkRateLimit, getRequestIp } from '@/lib/rate-limit'
 import { processOutboxBatch } from '@/lib/outbox'
 
 export const dynamic = 'force-dynamic'
+
+const ONLINE_THRESHOLD_MS = 90 * 1000 // 90 seconds timeout for ESP32 presence
 
 interface MercadoPagoPayment {
   id: number | string
@@ -55,7 +58,6 @@ async function parseRequestBody(req: NextRequest): Promise<any> {
       const params = new URLSearchParams(text)
       return Object.fromEntries(params.entries())
     }
-    // Fallback: try json first, if fails try form-urlencoded text
     const text = await req.text()
     if (!text) return null
     try {
@@ -122,11 +124,11 @@ async function handleNotification(
     // 1. Anti-Replay Protection: Check if this paymentId was already processed
     const existingPayment = await prisma.payment.findUnique({
       where: { mpPaymentId: rawPaymentId },
-      select: { id: true },
+      select: { id: true, status: true },
     })
 
     if (existingPayment) {
-      console.log(`[webhook RECV] Payment ${rawPaymentId} already processed previously`)
+      console.log(`[webhook RECV] Payment ${rawPaymentId} already processed previously (Status: ${existingPayment.status})`)
       return NextResponse.json({ ok: true, message: 'Payment already processed' }, { status: 200 })
     }
 
@@ -170,17 +172,21 @@ async function handleNotification(
     const payment = (await mpResponse.json()) as MercadoPagoPayment
     const mpPaymentId = String(payment.id)
 
-    // 4. Strict Payment Validation: status must be approved, BRL currency, amount > 0
+    // 4. Strict Payment Validation: status must be approved, BRL currency, amount >= 1.00
     if (
       mpPaymentId !== rawPaymentId ||
       payment.status.toLowerCase() !== 'approved' ||
       payment.currency_id !== 'BRL' ||
       !Number.isFinite(payment.transaction_amount) ||
-      payment.transaction_amount <= 0
+      payment.transaction_amount < 1.0
     ) {
-      console.log(`[webhook RECV] Payment ${mpPaymentId} status: ${payment.status}, amount: ${payment.transaction_amount}`)
-      return NextResponse.json({ ok: true, message: 'Payment status not approved or non-BRL' }, { status: 200 })
+      console.log(`[webhook RECV] Payment ${mpPaymentId} status: ${payment.status}, amount: ${payment.transaction_amount} (Requires >= 1.00 BRL)`)
+      return NextResponse.json({ ok: true, message: 'Payment status not approved or amount < 1.00 BRL' }, { status: 200 })
     }
+
+    // 5. REQUIREMENT 1: Floor / Integer Credits (ex: 1.02 -> 1 credit, cents discarded)
+    const rawAmount = payment.transaction_amount
+    const creditsToGrant = Math.floor(rawAmount) // Discards cents (e.g. 1.02 -> 1)
 
     const externalReference = String(payment.external_reference || '').trim()
     const posId = String(
@@ -200,7 +206,7 @@ async function handleNotification(
 
     let esp32 = null
 
-    // Strategy 1: Match by Terminal Serial Number (deviceSerial, e.g. "Q92-1733238464" inside "PAX_Q92__Q92-1733238464")
+    // Strategy A: Match by Terminal Serial Number (deviceSerial, e.g. "Q92-1733238464" inside "PAX_Q92__Q92-1733238464")
     if (deviceSerial) {
       esp32 = clientEsps.find(e =>
         e.mpPosId?.toLowerCase().includes(deviceSerial.toLowerCase()) ||
@@ -208,7 +214,7 @@ async function handleNotification(
       ) || null
     }
 
-    // Strategy 2: Match by Terminal ID or POS ID (posId, e.g. "135916764")
+    // Strategy B: Match by Terminal ID or POS ID (posId, e.g. "135916764")
     if (!esp32 && posId) {
       esp32 = clientEsps.find(e =>
         e.mpPosId?.toLowerCase() === posId.toLowerCase() ||
@@ -216,13 +222,13 @@ async function handleNotification(
       ) || null
     }
 
-    // Strategy 3: Match by External Reference (IDMAQ, e.g. "ADP-001")
+    // Strategy C: Match by External Reference (IDMAQ, e.g. "ADP-001")
     if (!esp32 && externalReference) {
       const serial = externalReference.replace(/^(idmaq|esp32):/i, '').trim().toUpperCase()
       esp32 = clientEsps.find(e => e.serialNumber.toUpperCase() === serial || e.id === serial) || null
     }
 
-    // Strategy 4: Fallback for 1-ESP32 Clients (If client has exactly 1 ESP32, credit it!)
+    // Strategy D: Fallback for 1-ESP32 Clients (If client has exactly 1 ESP32, credit it!)
     if (!esp32 && clientEsps.length === 1) {
       esp32 = clientEsps[0]
     }
@@ -247,17 +253,62 @@ async function handleNotification(
       return NextResponse.json({ error: 'Payment device not found' }, { status: 422 })
     }
 
-    const amount = new Prisma.Decimal(payment.transaction_amount).toDecimalPlaces(2)
-    const amountText = amount.toFixed(2)
-    const action = 'credit'
+    // 6. REQUIREMENT 2: Check ESP32 Online Status. If OFFLINE (>90s), AUTO-REFUND IMMEDIATELY!
+    const isEspOnline = esp32.lastSeen && (Date.now() - new Date(esp32.lastSeen).getTime() <= ONLINE_THRESHOLD_MS)
+
+    if (!isEspOnline) {
+      console.warn(`[webhook RECV] ESP32 ${esp32.serialNumber} is OFFLINE (>90s). Executing instant auto-refund for payment ${mpPaymentId}...`)
+
+      const refundResult = await refundMercadoPagoPayment({
+        paymentId: mpPaymentId,
+        accessToken,
+      })
+
+      await prisma.$transaction(async (tx) => {
+        await tx.payment.create({
+          data: {
+            clientId: client.id,
+            esp32Id: esp32.id,
+            mpPaymentId,
+            amount: new Prisma.Decimal(rawAmount),
+            status: 'refunded',
+            externalRef: externalReference || deviceSerial || posId || 'auto-refund-offline',
+          },
+        })
+
+        await tx.telemetryEvent.create({
+          data: {
+            esp32Id: esp32.id,
+            type: 'refund',
+            payload: JSON.stringify({
+              mpPaymentId,
+              status: 'refunded',
+              amount: rawAmount,
+              reason: 'ESP32 offline por mais de 90 segundos. Pagamento estornado automaticamente ao cliente.',
+              refundResult,
+              idmaq: esp32.serialNumber,
+            }),
+          },
+        })
+      })
+
+      console.log(`[webhook RECV] AUTO-REFUND EXECUTED! Payment ${mpPaymentId} refunded. ESP32 ${esp32.serialNumber} was OFFLINE.`)
+      return NextResponse.json({
+        ok: true,
+        message: 'ESP32 offline. Payment refunded automatically.',
+        refunded: true,
+      }, { status: 200 })
+    }
+
+    // 7. ESP32 is ONLINE: Grant Integer Credits (e.g. 1.02 -> 1) & Queue Outbox MQTT Message
+    const amountDecimal = new Prisma.Decimal(creditsToGrant)
     const payload = JSON.stringify({
-      action,
-      amount: Number(amountText),
+      action: 'credit',
+      amount: creditsToGrant,
       paymentId: mpPaymentId,
       serialNumber: esp32.serialNumber,
     })
 
-    // 5. Atomic Transaction: Record Payment, Increment ESP32 Credits, Queue Outbox MQTT Message
     await prisma.$transaction(async (tx) => {
       const doubleCheck = await tx.payment.findUnique({
         where: { mpPaymentId },
@@ -270,7 +321,7 @@ async function handleNotification(
           clientId: client.id,
           esp32Id: esp32.id,
           mpPaymentId,
-          amount,
+          amount: amountDecimal,
           status: 'approved',
           externalRef: externalReference || deviceSerial || posId || 'terminal-pos',
         },
@@ -279,7 +330,7 @@ async function handleNotification(
       await tx.esp32.update({
         where: { id: esp32.id },
         data: {
-          credits: { increment: amount },
+          credits: { increment: amountDecimal },
           lastSeen: new Date(),
         },
       })
@@ -300,7 +351,8 @@ async function handleNotification(
           payload: JSON.stringify({
             mpPaymentId,
             status: payment.status,
-            amount: Number(amountText),
+            paidAmount: rawAmount,
+            creditedAmount: creditsToGrant,
             terminalSerial: deviceSerial || posId,
             idmaq: esp32.serialNumber,
           }),
@@ -308,11 +360,11 @@ async function handleNotification(
       })
     })
 
-    console.log(`[webhook RECV] SUCCESS! Payment ${mpPaymentId} credited R$ ${amountText} to ESP32 ${esp32.serialNumber}`)
+    console.log(`[webhook RECV] SUCCESS! Payment ${mpPaymentId} (R$ ${rawAmount}) credited ${creditsToGrant} integer credit(s) to ESP32 ${esp32.serialNumber}`)
 
     // Immediately trigger outbox worker batch to publish MQTT credit to ESP32
     await processOutboxBatch(5)
-    return NextResponse.json({ ok: true, paymentId: mpPaymentId }, { status: 200 })
+    return NextResponse.json({ ok: true, paymentId: mpPaymentId, credits: creditsToGrant }, { status: 200 })
   } catch (error) {
     console.error('[webhook RECV] Error processing notification', error)
     return NextResponse.json({ error: 'Temporary processing failure' }, { status: 500 })
