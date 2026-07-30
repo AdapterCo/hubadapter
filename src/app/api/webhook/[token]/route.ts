@@ -204,9 +204,9 @@ async function handleNotification(
       return NextResponse.json({ ok: true, message: 'Payment status not approved or amount < 1.00 BRL' }, { status: 200 })
     }
 
-    // 5. REQUIREMENT 1: Floor / Integer Credits (ex: 1.02 -> 1 credit, cents discarded)
-    const rawAmount = payment.transaction_amount
-    const creditsToGrant = Math.floor(rawAmount) // Discards cents (e.g. 1.02 -> 1)
+    // 5. REQUIREMENT: Floor / Integer Credits for Physical Machine Relays (ex: 1.02 -> 1 pulse)
+    const rawAmount = payment.transaction_amount // Real monetary transaction amount (e.g. R$ 1.02)
+    const creditsToGrant = Math.floor(rawAmount) // Integer pulses for relay (e.g. 1 pulse)
 
     const externalReference = String(payment.external_reference || '').trim()
     const posId = String(
@@ -361,8 +361,9 @@ async function handleNotification(
       }, { status: 200 })
     }
 
-    // 8. ESP32 ACKNOWLEDGED RECEPTION (END-TO-END CONFIRMED): Record Payment, Increment Credits & Telemetry
-    const amountDecimal = new Prisma.Decimal(creditsToGrant)
+    // 8. ESP32 ACKNOWLEDGED RECEPTION (END-TO-END CONFIRMED): Record Exact Audit Amount, Increment Integer Credits & Telemetry
+    const auditAmountDecimal = new Prisma.Decimal(rawAmount) // Saves exact R$ 1.02 for audit
+    const creditIncrementDecimal = new Prisma.Decimal(creditsToGrant) // Increments 1 integer credit for physical relay
 
     await prisma.$transaction(async (tx) => {
       const doubleCheck = await tx.payment.findUnique({
@@ -376,7 +377,7 @@ async function handleNotification(
           clientId: client.id,
           esp32Id: esp32.id,
           mpPaymentId,
-          amount: amountDecimal,
+          amount: auditAmountDecimal, // Exact transaction amount (R$ 1.02)
           status: 'approved',
           paymentMethod: paymentMethodName,
           externalRef: externalReference || deviceSerial || posId || 'terminal-pos',
@@ -386,7 +387,7 @@ async function handleNotification(
       await tx.esp32.update({
         where: { id: esp32.id },
         data: {
-          credits: { increment: amountDecimal },
+          credits: { increment: creditIncrementDecimal }, // Integer credit (1.00)
           lastSeen: new Date(),
         },
       })
@@ -409,9 +410,9 @@ async function handleNotification(
       })
     })
 
-    console.log(`[webhook RECV] 🎉 END-TO-END ACK CONFIRMED! Payment ${mpPaymentId} (R$ ${rawAmount} via ${paymentMethodName}) credited ${creditsToGrant} credit(s) to ESP32 ${esp32.serialNumber}`)
+    console.log(`[webhook RECV] 🎉 END-TO-END ACK CONFIRMED! Payment ${mpPaymentId} (Audit: R$ ${rawAmount} via ${paymentMethodName}) credited ${creditsToGrant} credit(s) to ESP32 ${esp32.serialNumber}`)
 
-    return NextResponse.json({ ok: true, paymentId: mpPaymentId, credits: creditsToGrant, ack: true }, { status: 200 })
+    return NextResponse.json({ ok: true, paymentId: mpPaymentId, amount: rawAmount, credits: creditsToGrant, ack: true }, { status: 200 })
   } catch (error) {
     console.error('[webhook RECV] Error processing notification', error)
     return NextResponse.json({ error: 'Temporary processing failure' }, { status: 500 })
