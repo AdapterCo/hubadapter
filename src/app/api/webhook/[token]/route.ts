@@ -35,14 +35,19 @@ interface MercadoPagoPayment {
 }
 
 function parsePaymentMethod(payment: MercadoPagoPayment): string {
-  const methodId = String(payment.payment_method_id || payment.payment_method?.id || '').toLowerCase()
   const typeId = String(payment.payment_type_id || payment.payment_method?.type || '').toLowerCase()
+  const methodId = String(payment.payment_method_id || payment.payment_method?.id || '').toLowerCase()
 
-  if (methodId.includes('pix') || typeId.includes('bank_transfer')) return 'Pix'
-  if (typeId.includes('debit') || methodId.includes('debit')) return 'Cartão de Débito'
-  if (typeId.includes('credit') || methodId.includes('credit') || methodId.includes('visa') || methodId.includes('master') || methodId.includes('elo')) return 'Cartão de Crédito'
-  if (methodId) return methodId.toUpperCase()
-  return 'Pix / Cartão'
+  if (typeId === 'pix' || typeId === 'bank_transfer' || methodId.includes('pix')) {
+    return 'Pix'
+  }
+  if (typeId === 'prepaid_card' || typeId === 'debit_card' || methodId.includes('debit') || methodId.includes('debito')) {
+    return 'Débito'
+  }
+  if (typeId === 'credit_card' || methodId.includes('credit') || methodId.includes('credito') || methodId.includes('visa') || methodId.includes('master') || methodId.includes('elo')) {
+    return 'Crédito'
+  }
+  return 'Pix'
 }
 
 function extractPaymentId(req: NextRequest, body: any): string {
