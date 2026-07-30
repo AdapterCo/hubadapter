@@ -36,6 +36,12 @@ export default function MachineDetailPage() {
   const [machine, setMachine] = useState<Machine | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Edit Modal State
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [machineName, setMachineName] = useState('')
+  const [machineLocation, setMachineLocation] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+
   // Feedback banner state for active ping/credit tests
   const [testFeedback, setTestFeedback] = useState<{ espId: string; type: 'success' | 'error'; message: string } | null>(null)
   const [testingEspId, setTestingEspId] = useState<string | null>(null)
@@ -62,6 +68,32 @@ export default function MachineDetailPage() {
     const interval = setInterval(loadMachine, 15000)
     return () => clearInterval(interval)
   }, [loadMachine])
+
+  function openEditModal() {
+    if (!machine) return
+    setMachineName(machine.name)
+    setMachineLocation(machine.location || '')
+    setShowEditModal(true)
+  }
+
+  async function handleUpdateMachine(e: React.FormEvent) {
+    e.preventDefault()
+    if (!machine || !machineName) return
+    setSavingEdit(true)
+    const res = await fetch(`/api/machines/${machine.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: machineName, location: machineLocation }),
+    })
+    if (res.ok) {
+      setShowEditModal(false)
+      loadMachine()
+    } else {
+      const d = await res.json()
+      alert(d.error || 'Erro ao atualizar máquina')
+    }
+    setSavingEdit(false)
+  }
 
   async function openBindModal(esp: Esp32) {
     setActiveEsp(esp)
@@ -219,7 +251,10 @@ export default function MachineDetailPage() {
           <h1>🖥️ {machine.name}</h1>
           <p>{machine.location ? `📍 ${machine.location}` : 'Sem localização definida'}</p>
         </div>
-        <a href="/maquinas" className="btn btn-secondary">⬅️ Voltar</a>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={openEditModal}>✏️ Editar Máquina</button>
+          <a href="/maquinas" className="btn btn-secondary">⬅️ Voltar</a>
+        </div>
       </div>
 
       <div className="section-title">📡 Dispositivo (IDMAQ) Vinculado</div>
@@ -330,6 +365,46 @@ export default function MachineDetailPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* MODAL: Editar Máquina */}
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">✏️ Editar Máquina</span>
+              <button className="modal-close" onClick={() => setShowEditModal(false)}>×</button>
+            </div>
+            <form onSubmit={handleUpdateMachine}>
+              <div className="form-group">
+                <label className="form-label">Nome da Máquina</label>
+                <input
+                  id="detail-edit-name"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Máquina 01 - Loja Centro"
+                  value={machineName}
+                  onChange={e => setMachineName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Localização (opcional)</label>
+                <input
+                  id="detail-edit-location"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Av. Principal, 100"
+                  value={machineLocation}
+                  onChange={e => setMachineLocation(e.target.value)}
+                />
+              </div>
+              <button id="btn-save-detail-edit" type="submit" className="btn btn-primary" disabled={savingEdit}>
+                {savingEdit ? <span className="loading-spinner" /> : '💾'} Salvar Alterações
+              </button>
+            </form>
+          </div>
         </div>
       )}
 

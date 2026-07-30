@@ -62,6 +62,58 @@ export async function GET(
   }
 }
 
+// PATCH /api/machines/[id] - Editar nome e localização da máquina
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const session = await getServerSession(authOptions);
+
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
+    }
+
+    const machine = await prisma.machine.findFirst({
+      where: {
+        id,
+        clientId: session.user.id,
+      },
+    });
+
+    if (!machine) {
+      return NextResponse.json({ error: "Máquina não encontrada." }, { status: 404 });
+    }
+
+    const body = await req.json();
+    const { name, location } = body;
+
+    if (!name || typeof name !== "string" || name.trim() === "") {
+      return NextResponse.json(
+        { error: "O nome da máquina é obrigatório." },
+        { status: 400 }
+      );
+    }
+
+    const updated = await prisma.machine.update({
+      where: { id },
+      data: {
+        name: name.trim(),
+        location: location !== undefined ? (location ? String(location).trim() : null) : machine.location,
+      },
+    });
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    console.error("[machines/[id] PATCH]", error);
+    return NextResponse.json(
+      { error: "Erro interno no servidor." },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE /api/machines/[id] - Excluir uma máquina
 export async function DELETE(
   req: NextRequest,

@@ -23,6 +23,7 @@ export default function MaquinasPage() {
 
   // Modals state
   const [showAddMachine, setShowAddMachine] = useState(false)
+  const [editingMachine, setEditingMachine] = useState<Machine | null>(null)
   const [showEspModal, setShowEspModal] = useState<string | null>(null)
 
   // Form states
@@ -52,6 +53,32 @@ export default function MaquinasPage() {
     })
     setSaving(false)
     setShowAddMachine(false)
+    setMachineName('')
+    setMachineLocation('')
+    load()
+  }
+
+  function openEditModal(m: Machine) {
+    setEditingMachine(m)
+    setMachineName(m.name)
+    setMachineLocation(m.location || '')
+  }
+
+  async function updateMachine(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editingMachine || !machineName) return
+    setSaving(true)
+    const res = await fetch(`/api/machines/${editingMachine.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: machineName, location: machineLocation }),
+    })
+    if (!res.ok) {
+      const d = await res.json()
+      alert(d.error || 'Erro ao editar máquina')
+    }
+    setSaving(false)
+    setEditingMachine(null)
     setMachineName('')
     setMachineLocation('')
     load()
@@ -94,7 +121,7 @@ export default function MaquinasPage() {
           <h1>Minhas Máquinas</h1>
           <p>Gerencie suas máquinas e dispositivos cadastrados</p>
         </div>
-        <button id="btn-add-machine" className="btn btn-primary" onClick={() => setShowAddMachine(true)}>
+        <button id="btn-add-machine" className="btn btn-primary" onClick={() => { setMachineName(''); setMachineLocation(''); setShowAddMachine(true); }}>
           ➕ Nova Máquina
         </button>
       </div>
@@ -105,7 +132,7 @@ export default function MaquinasPage() {
         <div className="empty-state card">
           <div className="empty-icon">🖥️</div>
           <p>Nenhuma máquina cadastrada ainda.</p>
-          <button className="btn btn-primary" onClick={() => setShowAddMachine(true)}>Cadastrar primeira máquina</button>
+          <button className="btn btn-primary" onClick={() => { setMachineName(''); setMachineLocation(''); setShowAddMachine(true); }}>Cadastrar primeira máquina</button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -118,6 +145,7 @@ export default function MaquinasPage() {
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <a href={`/maquinas/${m.id}`} className="btn btn-secondary btn-sm">👁️ Detalhes</a>
+                  <button className="btn btn-secondary btn-sm" onClick={() => openEditModal(m)}>✏️ Editar</button>
                   <button className="btn btn-secondary btn-sm" onClick={() => setShowEspModal(m.id)}>➕ Adicionar Dispositivo</button>
                   <button className="btn btn-danger btn-sm" onClick={() => deleteMachine(m.id)}>🗑️ Excluir</button>
                 </div>
@@ -208,6 +236,46 @@ export default function MaquinasPage() {
               </div>
               <button id="btn-save-machine" type="submit" className="btn btn-primary" disabled={saving}>
                 {saving ? <span className="loading-spinner" /> : '💾'} Criar Máquina
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Editar Máquina */}
+      {editingMachine && (
+        <div className="modal-overlay" onClick={() => setEditingMachine(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">✏️ Editar Máquina</span>
+              <button className="modal-close" onClick={() => setEditingMachine(null)}>×</button>
+            </div>
+            <form onSubmit={updateMachine}>
+              <div className="form-group">
+                <label className="form-label">Nome da Máquina</label>
+                <input
+                  id="edit-machine-name"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Máquina 01 - Loja Centro"
+                  value={machineName}
+                  onChange={e => setMachineName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Localização (opcional)</label>
+                <input
+                  id="edit-machine-location"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Av. Principal, 100"
+                  value={machineLocation}
+                  onChange={e => setMachineLocation(e.target.value)}
+                />
+              </div>
+              <button id="btn-update-machine" type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? <span className="loading-spinner" /> : '💾'} Salvar Alterações
               </button>
             </form>
           </div>
