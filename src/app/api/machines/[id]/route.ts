@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/machines/[id] - get a single machine with its esp32s
+// GET /api/machines/[id] - Obter detalhes de uma máquina
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -15,7 +15,7 @@ export async function GET(
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const machine = await prisma.machine.findFirst({
@@ -31,11 +31,11 @@ export async function GET(
     });
 
     if (!machine) {
-      return NextResponse.json({ error: "Machine not found" }, { status: 404 });
+      return NextResponse.json({ error: "Máquina não encontrada." }, { status: 404 });
     }
 
     const now = Date.now();
-    // ESP32 sends heartbeat every 30s. If lastSeen > 90s ago, consider OFFLINE.
+    // Heartbeat a cada 30s. Se lastSeen > 90s atrás, considera OFFLINE.
     const ONLINE_THRESHOLD_MS = 90 * 1000;
 
     const formattedMachine = {
@@ -56,13 +56,13 @@ export async function GET(
   } catch (error) {
     console.error("[machines/[id] GET]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }
 }
 
-// DELETE /api/machines/[id] - delete a machine
+// DELETE /api/machines/[id] - Excluir uma máquina
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -72,7 +72,7 @@ export async function DELETE(
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const machine = await prisma.machine.findFirst({
@@ -83,7 +83,7 @@ export async function DELETE(
     });
 
     if (!machine) {
-      return NextResponse.json({ error: "Machine not found" }, { status: 404 });
+      return NextResponse.json({ error: "Máquina não encontrada." }, { status: 404 });
     }
 
     await prisma.machine.delete({ where: { id } });
@@ -92,7 +92,7 @@ export async function DELETE(
   } catch (error) {
     console.error("[machines/[id] DELETE]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }

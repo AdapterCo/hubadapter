@@ -5,13 +5,13 @@ import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/machines - list all machines for the current client
+// GET /api/machines - Listar todas as máquinas do cliente
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const machines = await prisma.machine.findMany({
@@ -35,7 +35,7 @@ export async function GET() {
     });
 
     const now = Date.now();
-    // ESP32 sends heartbeat every 30s. If lastSeen > 90s ago, consider OFFLINE.
+    // Heartbeat a cada 30s. Se lastSeen > 90s atrás, considera OFFLINE.
     const ONLINE_THRESHOLD_MS = 90 * 1000;
 
     const formattedMachines = machines.map((m) => ({
@@ -56,19 +56,19 @@ export async function GET() {
   } catch (error) {
     console.error("[machines GET]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }
 }
 
-// POST /api/machines - create a new machine for the current client
+// POST /api/machines - Criar nova máquina para o cliente
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const body = await req.json();
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
 
     if (!name || typeof name !== "string" || name.trim() === "") {
       return NextResponse.json(
-        { error: "Machine name is required" },
+        { error: "O nome da máquina é obrigatório." },
         { status: 400 }
       );
     }
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("[machines POST]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }

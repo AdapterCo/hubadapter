@@ -5,13 +5,13 @@ import prisma from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/payments - returns payments for current client with pagination
+// GET /api/payments - Listar pagamentos do cliente
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error("[payments GET]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }

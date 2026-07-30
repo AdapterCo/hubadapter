@@ -6,13 +6,13 @@ import { encryptSecret } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/client/settings - returns current client mpAccessToken (masked) and webhookToken
+// GET /api/client/settings - Obter configurações do cliente
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const client = await prisma.client.findUnique({
@@ -21,7 +21,7 @@ export async function GET() {
     });
 
     if (!client) {
-      return NextResponse.json({ error: "Client not found" }, { status: 404 });
+      return NextResponse.json({ error: "Cliente não encontrado." }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -32,22 +32,22 @@ export async function GET() {
   } catch (error) {
     console.error("[client/settings GET]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }
 }
 
-// PATCH /api/client/settings - update mpAccessToken
+// PATCH /api/client/settings - Atualizar Access Token do Mercado Pago
 export async function PATCH(req: NextRequest) {
   try {
     if (Number(req.headers.get("content-length") || 0) > 16 * 1024) {
-      return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+      return NextResponse.json({ error: "Tamanho de dados excedido." }, { status: 413 });
     }
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const body = await req.json();
@@ -55,7 +55,7 @@ export async function PATCH(req: NextRequest) {
 
     if (mpAccessToken === undefined && mpWebhookSecret === undefined) {
       return NextResponse.json(
-        { error: "mpAccessToken or mpWebhookSecret is required" },
+        { error: "O Access Token do Mercado Pago é obrigatório." },
         { status: 400 }
       );
     }
@@ -65,7 +65,7 @@ export async function PATCH(req: NextRequest) {
       (mpWebhookSecret !== undefined && typeof mpWebhookSecret !== "string")
     ) {
       return NextResponse.json(
-        { error: "Secrets must be strings" },
+        { error: "Formato de token inválido." },
         { status: 400 }
       );
     }
@@ -75,7 +75,7 @@ export async function PATCH(req: NextRequest) {
       select: { mpAccessToken: true, mpWebhookSecret: true },
     });
     if (!existing) {
-      return NextResponse.json({ error: "Client not found" }, { status: 404 });
+      return NextResponse.json({ error: "Cliente não encontrado." }, { status: 404 });
     }
 
     const data: {
@@ -104,7 +104,7 @@ export async function PATCH(req: NextRequest) {
   } catch (error) {
     console.error("[client/settings PATCH]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }

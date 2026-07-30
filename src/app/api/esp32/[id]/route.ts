@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 
-// GET /api/esp32/[id] - get esp32 with recent payments
+// GET /api/esp32/[id] - Obter detalhes do dispositivo
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -13,7 +13,7 @@ export async function GET(
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const esp32 = await prisma.esp32.findFirst({
@@ -47,7 +47,7 @@ export async function GET(
     });
 
     if (!esp32) {
-      return NextResponse.json({ error: "Esp32 not found" }, { status: 404 });
+      return NextResponse.json({ error: "Dispositivo não encontrado." }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -61,13 +61,13 @@ export async function GET(
   } catch (error) {
     console.error("[esp32/[id] GET]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }
 }
 
-// PATCH /api/esp32/[id] - update online status / lastSeen
+// PATCH /api/esp32/[id] - Atualizar status do dispositivo
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -77,7 +77,7 @@ export async function PATCH(
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const esp32 = await prisma.esp32.findFirst({
@@ -88,7 +88,7 @@ export async function PATCH(
     });
 
     if (!esp32) {
-      return NextResponse.json({ error: "Esp32 not found" }, { status: 404 });
+      return NextResponse.json({ error: "Dispositivo não encontrado." }, { status: 404 });
     }
 
     const body = await req.json();
@@ -118,13 +118,13 @@ export async function PATCH(
   } catch (error) {
     console.error("[esp32/[id] PATCH]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }
 }
 
-// DELETE /api/esp32/[id] - delete esp32
+// DELETE /api/esp32/[id] - Remover dispositivo
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -134,7 +134,7 @@ export async function DELETE(
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Sessão expirada. Faça login novamente." }, { status: 401 });
     }
 
     const esp32 = await prisma.esp32.findFirst({
@@ -145,7 +145,7 @@ export async function DELETE(
     });
 
     if (!esp32) {
-      return NextResponse.json({ error: "Esp32 not found" }, { status: 404 });
+      return NextResponse.json({ error: "Dispositivo não encontrado." }, { status: 404 });
     }
 
     await prisma.esp32.delete({ where: { id } });
@@ -154,7 +154,7 @@ export async function DELETE(
   } catch (error) {
     console.error("[esp32/[id] DELETE]", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Erro interno no servidor." },
       { status: 500 }
     );
   }
