@@ -16,6 +16,12 @@ interface MercadoPagoPayment {
   pos_id?: string | number
   store_id?: string | number
   collector_id?: number
+  payment_method_id?: string
+  payment_type_id?: string
+  payment_method?: {
+    id?: string
+    type?: string
+  }
   point_of_interaction?: {
     device?: {
       serial_number?: string
@@ -26,6 +32,17 @@ interface MercadoPagoPayment {
       pos_id?: string | number
     }
   }
+}
+
+function parsePaymentMethod(payment: MercadoPagoPayment): string {
+  const methodId = String(payment.payment_method_id || payment.payment_method?.id || '').toLowerCase()
+  const typeId = String(payment.payment_type_id || payment.payment_method?.type || '').toLowerCase()
+
+  if (methodId.includes('pix') || typeId.includes('bank_transfer')) return 'Pix'
+  if (typeId.includes('debit') || methodId.includes('debit')) return 'Cartão de Débito'
+  if (typeId.includes('credit') || methodId.includes('credit') || methodId.includes('visa') || methodId.includes('master') || methodId.includes('elo')) return 'Cartão de Crédito'
+  if (methodId) return methodId.toUpperCase()
+  return 'Pix / Cartão'
 }
 
 function extractPaymentId(req: NextRequest, body: any): string {
@@ -168,6 +185,7 @@ async function handleNotification(
 
     const payment = (await mpResponse.json()) as MercadoPagoPayment
     const mpPaymentId = String(payment.id)
+    const paymentMethodName = parsePaymentMethod(payment)
 
     // 4. Strict Payment Validation: status must be approved, BRL currency, amount >= 1.00
     if (
@@ -308,6 +326,7 @@ async function handleNotification(
             mpPaymentId,
             amount: new Prisma.Decimal(rawAmount),
             status: 'refunded',
+            paymentMethod: paymentMethodName,
             externalRef: externalReference || deviceSerial || posId || 'auto-refund-no-ack',
           },
         })
@@ -320,6 +339,7 @@ async function handleNotification(
               mpPaymentId,
               status: 'refunded',
               amount: rawAmount,
+              paymentMethod: paymentMethodName,
               reason: 'ESP32 não confirmou o recebimento da mensagem (sem resposta ponta a ponta). Pagamento estornado automaticamente.',
               refundResult,
               idmaq: esp32.serialNumber,
@@ -353,6 +373,7 @@ async function handleNotification(
           mpPaymentId,
           amount: amountDecimal,
           status: 'approved',
+          paymentMethod: paymentMethodName,
           externalRef: externalReference || deviceSerial || posId || 'terminal-pos',
         },
       })
@@ -374,6 +395,7 @@ async function handleNotification(
             status: payment.status,
             paidAmount: rawAmount,
             creditedAmount: creditsToGrant,
+            paymentMethod: paymentMethodName,
             terminalSerial: deviceSerial || posId,
             idmaq: esp32.serialNumber,
             ackConfirmed: true,
@@ -382,7 +404,7 @@ async function handleNotification(
       })
     })
 
-    console.log(`[webhook RECV] 🎉 END-TO-END ACK CONFIRMED! Payment ${mpPaymentId} (R$ ${rawAmount}) credited ${creditsToGrant} credit(s) to ESP32 ${esp32.serialNumber}`)
+    console.log(`[webhook RECV] 🎉 END-TO-END ACK CONFIRMED! Payment ${mpPaymentId} (R$ ${rawAmount} via ${paymentMethodName}) credited ${creditsToGrant} credit(s) to ESP32 ${esp32.serialNumber}`)
 
     return NextResponse.json({ ok: true, paymentId: mpPaymentId, credits: creditsToGrant, ack: true }, { status: 200 })
   } catch (error) {

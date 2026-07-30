@@ -65,8 +65,8 @@ model Esp32 {
   mpPosName        String?
   machine          Machine          @relation(fields: [machineId], references: [id], onDelete: Cascade)
   payments         Payment[]
-  events           TelemetryEvent[]
-  createdAt        DateTime         @default(now())
+  events       TelemetryEvent[]
+  createdAt    DateTime         @default(now())
 
   @@index([machineId])
   @@index([mpPosId])
@@ -74,16 +74,17 @@ model Esp32 {
 }
 
 model Payment {
-  id          String   @id @default(cuid())
-  clientId    String
-  esp32Id     String
-  mpPaymentId String   @unique
-  amount      Decimal  @db.Decimal(12, 2)
-  status      String
-  externalRef String?
-  createdAt   DateTime @default(now())
-  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  esp32       Esp32    @relation(fields: [esp32Id], references: [id], onDelete: Cascade)
+  id            String   @id @default(cuid())
+  clientId      String
+  esp32Id       String
+  mpPaymentId   String   @unique
+  amount        Decimal  @db.Decimal(12, 2)
+  status        String
+  paymentMethod String?
+  externalRef   String?
+  createdAt     DateTime @default(now())
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  esp32         Esp32    @relation(fields: [esp32Id], references: [id], onDelete: Cascade)
 
   @@index([clientId, createdAt])
   @@index([clientId, status, createdAt])

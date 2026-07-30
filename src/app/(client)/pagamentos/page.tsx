@@ -7,6 +7,7 @@ interface Payment {
   mpPaymentId: string
   amount: number
   status: string
+  paymentMethod: string | null
   createdAt: string
   esp32: { serialNumber: string }
 }
@@ -16,18 +17,27 @@ function fmt(val: number) { return val.toLocaleString('pt-BR', { style: 'currenc
 export default function PagamentosPage() {
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'approved' | 'pending' | 'rejected'>('all')
+  const [filter, setFilter] = useState<'all' | 'approved' | 'rejected'>('all')
 
   const load = useCallback(async () => {
     const res = await fetch('/api/payments?limit=100')
     const data = await res.json()
-    setPayments(data)
+    setPayments(Array.isArray(data) ? data : [])
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const filtered = payments.filter(p => filter === 'all' ? true : p.status === filter)
+  const filtered = payments.filter(p => {
+    if (filter === 'all') return true
+    if (filter === 'approved') return p.status === 'approved'
+    if (filter === 'rejected') return p.status === 'rejected' || p.status === 'refunded'
+    return true
+  })
+
+  const countAll = payments.length
+  const countApproved = payments.filter(p => p.status === 'approved').length
+  const countRejected = payments.filter(p => p.status === 'rejected' || p.status === 'refunded').length
   const totalApproved = payments.filter(p => p.status === 'approved').reduce((a, p) => a + p.amount, 0)
 
   return (
@@ -41,14 +51,24 @@ export default function PagamentosPage() {
       </div>
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
-        {(['all', 'approved', 'pending', 'rejected'] as const).map(f => {
-          const count = f === 'all' ? payments.length : payments.filter(p => p.status === f).length
-          return (
-            <button key={f} className={`btn ${filter === f ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setFilter(f)}>
-              {f === 'all' ? `Todos (${count})` : f === 'approved' ? `✅ Aprovados (${count})` : f === 'pending' ? `⏳ Pendentes (${count})` : `❌ Rejeitados (${count})`}
-            </button>
-          )
-        })}
+        <button
+          className={`btn ${filter === 'all' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          onClick={() => setFilter('all')}
+        >
+          Todos ({countAll})
+        </button>
+        <button
+          className={`btn ${filter === 'approved' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          onClick={() => setFilter('approved')}
+        >
+          ✅ Aprovados ({countApproved})
+        </button>
+        <button
+          className={`btn ${filter === 'rejected' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          onClick={() => setFilter('rejected')}
+        >
+          ❌ Rejeitados / Estornados ({countRejected})
+        </button>
       </div>
 
       <div className="card">
@@ -57,23 +77,41 @@ export default function PagamentosPage() {
         ) : filtered.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">💳</div>
-            <p>Nenhum pagamento encontrado.</p>
+            <p>Nenhum pagamento encontrado para o filtro selecionado.</p>
           </div>
         ) : (
           <div className="table-wrapper">
             <table>
               <thead>
-                <tr><th>Data</th><th>Valor</th><th>Status</th><th>ESP32</th><th>MP ID</th></tr>
+                <tr>
+                  <th>Data</th>
+                  <th>Valor</th>
+                  <th>Método</th>
+                  <th>Status</th>
+                  <th>ESP32</th>
+                  <th>MP ID</th>
+                </tr>
               </thead>
               <tbody>
                 {filtered.map(p => (
                   <tr key={p.id}>
-                    <td style={{ color: 'var(--text-secondary)' }}>{new Date(p.createdAt).toLocaleString('pt-BR')}</td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                      {new Date(p.createdAt).toLocaleString('pt-BR')}
+                    </td>
                     <td className="strong">{fmt(p.amount)}</td>
                     <td>
-                      <span className={`badge ${p.status}`}>
-                        {p.status === 'approved' ? '✅ Aprovado' : p.status === 'pending' ? '⏳ Pendente' : '❌ Rejeitado'}
+                      <span className="badge info" style={{ fontSize: '11px' }}>
+                        {p.paymentMethod || 'Pix / Cartão'}
                       </span>
+                    </td>
+                    <td>
+                      {p.status === 'approved' ? (
+                        <span className="badge online">✅ Aprovado</span>
+                      ) : p.status === 'refunded' ? (
+                        <span className="badge warning">💸 Estornado</span>
+                      ) : (
+                        <span className="badge offline">❌ Rejeitado</span>
+                      )}
                     </td>
                     <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{p.esp32.serialNumber}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--text-muted)' }}>#{p.mpPaymentId}</td>

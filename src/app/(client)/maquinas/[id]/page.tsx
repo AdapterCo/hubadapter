@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
+import Esp32ActivityReport from '@/components/Esp32ActivityReport'
 
 interface Esp32 {
   id: string
@@ -182,7 +183,7 @@ export default function MachineDetailPage() {
         setTestFeedback({
           espId: esp32Id,
           type: 'success',
-          message: '⚡ Comando de teste de crédito (+ R$ 1,00) enviado ao dispositivo via MQTT com sucesso!',
+          message: '⚡ Comando de teste de crédito (+ 1 crédito inteiro) enviado ao dispositivo via MQTT com sucesso!',
         })
         loadMachine()
       }
@@ -267,13 +268,13 @@ export default function MachineDetailPage() {
                     <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                       💳 Máquina de Cartão Mercado Pago Vinculada
                     </div>
-                    {esp.mpPosName ? (
+                    {esp.mpPosId ? (
                       <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--success)', marginTop: '4px' }}>
-                        ✅ {esp.mpPosName} <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>(ID: {esp.mpPosId})</span>
+                        ✅ Terminal: {esp.mpPosId}
                       </div>
                     ) : (
                       <div style={{ fontSize: '13px', color: 'var(--warning)', marginTop: '4px' }}>
-                        ⚠️ Nenhuma máquina do Mercado Pago vinculada a este ESP32
+                        ⚠️ Nenhuma máquina de cartão do Mercado Pago vinculada a este ESP32
                       </div>
                     )}
                   </div>
@@ -283,10 +284,19 @@ export default function MachineDetailPage() {
                     onClick={() => openBindModal(esp)}
                     id={`btn-bind-mp-${esp.id}`}
                   >
-                    🔄 {esp.mpPosName ? 'Alterar Maquininha MP' : 'Buscar & Vincular Maquininha MP'}
+                    🔄 {esp.mpPosId ? 'Alterar Maquininha MP' : 'Buscar & Vincular Maquininha MP'}
                   </button>
                 </div>
               </div>
+
+              {/* Activity & Uptime Report Component */}
+              <Esp32ActivityReport
+                serialNumber={esp.serialNumber}
+                lastSeen={esp.lastSeen}
+                online={esp.online}
+                mqttTopic={esp.mqttTopic}
+                credits={esp.credits}
+              />
 
               {/* Feedback alert for testing commands */}
               {testFeedback && testFeedback.espId === esp.id && (
@@ -298,9 +308,9 @@ export default function MachineDetailPage() {
               {/* Actions & Credits */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Crédito Total Acumulado: </span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Créditos Inteiros Liberados: </span>
                   <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--accent-light)' }}>
-                    R$ {Number(esp.credits).toFixed(2)}
+                    {Number(esp.credits).toFixed(0)} crédito(s)
                   </span>
                   {esp.lastSeen && (
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
@@ -322,7 +332,7 @@ export default function MachineDetailPage() {
                     disabled={testingEspId === esp.id}
                     onClick={() => sendMqttCommand(esp.id, 'credit_test')}
                   >
-                    ⚡ Teste de Crédito (+ R$ 1,00)
+                    ⚡ Teste de Crédito (+ 1 Crédito)
                   </button>
                 </div>
               </div>
@@ -341,14 +351,14 @@ export default function MachineDetailPage() {
             </div>
 
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              Vinculando ao ESP32 <strong style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{activeEsp.serialNumber}</strong>. As consultas ao Mercado Pago são processadas com segurança no backend.
+              Vinculando ao ESP32 <strong style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{activeEsp.serialNumber}</strong>. As consultas ao endpoint de terminais do Mercado Pago são processadas no backend.
             </p>
 
             {loadingMp ? (
               <div style={{ textAlign: 'center', padding: '40px' }}>
                 <span className="loading-spinner" /><br />
                 <span style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '8px', display: 'block' }}>
-                  Consultando maquininhas cadastradas no seu Mercado Pago...
+                  Consultando máquinas (terminals/v1/list) cadastradas no seu Mercado Pago...
                 </span>
               </div>
             ) : mpError ? (
@@ -392,7 +402,7 @@ export default function MachineDetailPage() {
                         💳 {dev.name}
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', fontFamily: 'monospace' }}>
-                        ID POS: {dev.id} {dev.operating_mode ? `• Modo: ${dev.operating_mode}` : ''}
+                        ID Terminal: {dev.id} {dev.operating_mode ? `• Modo: ${dev.operating_mode}` : ''}
                       </div>
                     </div>
 
