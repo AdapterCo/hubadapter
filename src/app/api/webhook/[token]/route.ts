@@ -45,6 +45,33 @@ function extractPaymentId(req: NextRequest, body: any): string {
   return String(val).trim()
 }
 
+async function parseRequestBody(req: NextRequest): Promise<any> {
+  const contentType = req.headers.get('content-type') || ''
+  try {
+    if (contentType.includes('application/json')) {
+      return await req.json()
+    }
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      const text = await req.text()
+      const params = new URLSearchParams(text)
+      return Object.fromEntries(params.entries())
+    }
+    // Fallback: try json first, if fails try form-urlencoded text
+    const text = await req.text()
+    if (!text) return null
+    try {
+      return JSON.parse(text)
+    } catch {
+      if (text.includes('=')) {
+        return Object.fromEntries(new URLSearchParams(text).entries())
+      }
+      return { rawText: text }
+    }
+  } catch {
+    return null
+  }
+}
+
 async function handleNotification(
   req: NextRequest,
   token: string,
@@ -56,11 +83,19 @@ async function handleNotification(
     60 * 1000
   )
   if (!rateLimit.allowed) {
+    console.warn(`[webhook RECV] Rate limit exceeded for token ${token}`)
     return NextResponse.json(
       { error: 'Too many requests' },
       { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfter) } }
     )
   }
+
+  console.log('[webhook RECV]', {
+    method: req.method,
+    url: req.url,
+    contentType: req.headers.get('content-type'),
+    body,
+  })
 
   try {
     const client = await prisma.client.findUnique({
@@ -74,13 +109,17 @@ async function handleNotification(
     })
 
     if (!client?.active) {
+      console.warn(`[webhook RECV] Inactive or non-existent client for token: ${token}`)
       return NextResponse.json({ ok: true }, { status: 200 })
     }
 
     const rawPaymentId = extractPaymentId(req, body)
     if (!rawPaymentId) {
+      console.warn('[webhook RECV] No payment ID extracted from request', { url: req.url, body })
       return NextResponse.json({ ok: true, message: 'No payment ID found' }, { status: 200 })
     }
+
+    console.log(`[webhook RECV] Extracted payment ID: ${rawPaymentId} for client: ${client.id}`)
 
     // 1. Anti-Replay Protection: Check if this paymentId was already processed
     const existingPayment = await prisma.payment.findUnique({
@@ -89,6 +128,7 @@ async function handleNotification(
     })
 
     if (existingPayment) {
+      console.log(`[webhook RECV] Payment ${rawPaymentId} already processed previously`)
       return NextResponse.json({ ok: true, message: 'Payment already processed' }, { status: 200 })
     }
 
@@ -105,6 +145,7 @@ async function handleNotification(
       })
 
       if (!isValidSig) {
+        console.warn(`[webhook RECV] Signature validation failed for payment ${rawPaymentId}`)
         return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 })
       }
     }
@@ -112,6 +153,7 @@ async function handleNotification(
     // 3. Get client's Mercado Pago Access Token
     const accessToken = decryptSecret(client.mpAccessToken)
     if (!accessToken) {
+      console.warn(`[webhook RECV] Client ${client.id} has no mpAccessToken configured`)
       return NextResponse.json({ error: 'Mercado Pago token is not configured' }, { status: 409 })
     }
 
@@ -132,7 +174,7 @@ async function handleNotification(
           data: { mpTokenValid: false, mpTokenCheckedAt: new Date() },
         })
       }
-      console.error('[webhook/IPN] Mercado Pago API query failed', {
+      console.error('[webhook RECV] Mercado Pago API query failed', {
         status: mpResponse.status,
         paymentId: rawPaymentId,
         clientId: client.id,
@@ -156,6 +198,7 @@ async function handleNotification(
       !Number.isFinite(payment.transaction_amount) ||
       payment.transaction_amount <= 0
     ) {
+      console.log(`[webhook RECV] Payment ${mpPaymentId} status: ${payment.status}, amount: ${payment.transaction_amount}`)
       return NextResponse.json({ ok: true, message: 'Payment status not approved or non-BRL' }, { status: 200 })
     }
 
@@ -214,7 +257,7 @@ async function handleNotification(
           externalReference: externalReference || null,
         },
       })
-      console.warn('[webhook/IPN] Payment could not be associated to an ESP32', {
+      console.warn('[webhook RECV] Payment could not be associated to an ESP32', {
         paymentId: mpPaymentId,
         clientId: client.id,
         deviceSerial,
@@ -285,11 +328,13 @@ async function handleNotification(
       })
     })
 
+    console.log(`[webhook RECV] SUCCESS! Payment ${mpPaymentId} credited R$ ${amountText} to ESP32 ${esp32.serialNumber}`)
+
     // Immediately trigger outbox worker batch to publish MQTT credit to ESP32
     await processOutboxBatch(5)
     return NextResponse.json({ ok: true, paymentId: mpPaymentId }, { status: 200 })
   } catch (error) {
-    console.error('[webhook/IPN] Error processing notification', error)
+    console.error('[webhook RECV] Error processing notification', error)
     return NextResponse.json({ error: 'Temporary processing failure' }, { status: 500 })
   }
 }
@@ -304,7 +349,7 @@ export async function POST(
     return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
   }
 
-  const body: unknown = await req.json().catch(() => null)
+  const body = await parseRequestBody(req)
   return handleNotification(req, token, body)
 }
 
