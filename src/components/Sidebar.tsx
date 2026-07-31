@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { signOut } from 'next-auth/react'
@@ -19,7 +20,7 @@ const adminNav: NavItem[] = [
   { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
   { href: '/admin/clientes', icon: '👥', label: 'Clientes' },
   { href: '/admin/dispositivos', icon: '📦', label: 'Dispositivos (IDMAQ)' },
-  { href: '/admin/pagamentos', icon: '💳', label: 'Pagamentos' },
+  { href: '/admin/pagamentos', icon: '💳', label: 'Mensalidades SaaS' },
   { href: '/admin/telemetria', icon: '📡', label: 'Telemetria Global' },
 ]
 
@@ -32,63 +33,127 @@ const clientNav: NavItem[] = [
 
 export default function Sidebar({ role, userName }: SidebarProps) {
   const pathname = usePathname()
+  const [mobileOpen, setMobileOpen] = useState(false)
   const navItems = role === 'ADMIN' ? adminNav : clientNav
 
+  // Fechar o menu mobile automaticamente ao trocar de rota
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [pathname])
+
   return (
-    <aside className="sidebar">
-      <div className="sidebar-logo">
-        <div className="logo-icon">📡</div>
-        <div>
-          <div className="logo-text">AdapterHub</div>
-          <div className="logo-sub">Sistema de Telemetria</div>
+    <>
+      {/* BARRA SUPERIOR MOBILE (Apenas telas pequenas < 768px) */}
+      <header className="mobile-header">
+        <div className="mobile-header-brand">
+          <div className="logo-icon">📡</div>
+          <div>
+            <div className="logo-text">AdapterHub</div>
+            <div className="logo-sub">Sistema de Telemetria</div>
+          </div>
         </div>
-      </div>
 
-      <nav className="sidebar-nav">
-        <span className="nav-section-title">
-          {role === 'ADMIN' ? 'Administração' : 'Menu Principal'}
-        </span>
+        <button
+          className="mobile-menu-btn"
+          onClick={() => setMobileOpen(!mobileOpen)}
+          aria-label="Abrir Menu"
+        >
+          {mobileOpen ? '✕' : '☰'}
+        </button>
+      </header>
 
-        {navItems.map(item => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`nav-item ${pathname === item.href || pathname.startsWith(item.href + '/') ? 'active' : ''}`}
-          >
-            <span style={{ fontSize: '16px' }}>{item.icon}</span>
-            <span>{item.label}</span>
-          </Link>
-        ))}
-      </nav>
+      {/* OVERLAY ESCURO BACKDROP (MOBILE) */}
+      {mobileOpen && (
+        <div
+          className="mobile-backdrop"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
 
-      <div className="sidebar-footer">
-        <div className="user-badge">
-          <div className="user-avatar">
-            {userName.charAt(0).toUpperCase()}
+      {/* SIDEBAR PRINCIPAL / DRAWER MOBILE */}
+      <aside className={`sidebar ${mobileOpen ? 'open' : ''}`}>
+        <div className="sidebar-logo">
+          <div className="logo-icon">📡</div>
+          <div>
+            <div className="logo-text">AdapterHub</div>
+            <div className="logo-sub">Sistema de Telemetria</div>
           </div>
-          <div className="user-info" style={{ flex: 1, minWidth: 0 }}>
-            <div className="user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {userName}
-            </div>
-            <div className="user-role">{role === 'ADMIN' ? 'Administrador' : 'Cliente'}</div>
-          </div>
+          {/* Botão para fechar gaveta no mobile */}
           <button
-            onClick={() => signOut({ callbackUrl: '/login' })}
-            title="Sair"
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              color: 'var(--text-muted)',
-              fontSize: '16px',
-              padding: '4px',
-              flexShrink: 0,
-            }}
+            className="mobile-close-btn"
+            onClick={() => setMobileOpen(false)}
           >
-            🚪
+            ✕
           </button>
         </div>
-      </div>
-    </aside>
+
+        <nav className="sidebar-nav">
+          <span className="nav-section-title">
+            {role === 'ADMIN' ? 'Administração' : 'Menu Principal'}
+          </span>
+
+          {navItems.map(item => {
+            const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`nav-item ${isActive ? 'active' : ''}`}
+                onClick={() => setMobileOpen(false)}
+              >
+                <span style={{ fontSize: '18px' }}>{item.icon}</span>
+                <span>{item.label}</span>
+              </Link>
+            )
+          })}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="user-badge">
+            <div className="user-avatar">
+              {userName.charAt(0).toUpperCase()}
+            </div>
+            <div className="user-info" style={{ flex: 1, minWidth: 0 }}>
+              <div className="user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {userName}
+              </div>
+              <div className="user-role">{role === 'ADMIN' ? 'Administrador' : 'Cliente'}</div>
+            </div>
+            <button
+              onClick={() => signOut({ callbackUrl: '/login' })}
+              title="Sair"
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--text-muted)',
+                fontSize: '18px',
+                padding: '6px',
+                flexShrink: 0,
+              }}
+            >
+              🚪
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* BARRA DE NAVEGAÇÃO INFERIOR RÁPIDA (BOTTOM NAV PARA DISPOSITIVOS MÓVEIS) */}
+      <nav className="mobile-bottom-nav">
+        {navItems.slice(0, 4).map(item => {
+          const isActive = pathname === item.href || (item.href !== '/painel' && item.href !== '/admin/dashboard' && pathname.startsWith(item.href))
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`mobile-bottom-nav-item ${isActive ? 'active' : ''}`}
+            >
+              <span className="icon">{item.icon}</span>
+              <span className="label">{item.label.split(' ')[0]}</span>
+            </Link>
+          )
+        })}
+      </nav>
+    </>
   )
 }
