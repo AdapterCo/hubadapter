@@ -204,7 +204,6 @@ async function handleNotification(
       return NextResponse.json({ ok: true, message: 'Payment status not approved or amount < 1.00 BRL' }, { status: 200 })
     }
 
-    // 5. REQUIREMENT: Floor / Integer Credits for Physical Machine Relays (ex: 1.02 -> 1 pulse)
     const rawAmount = payment.transaction_amount // Real monetary transaction amount (e.g. R$ 1.02)
     const creditsToGrant = Math.floor(rawAmount) // Integer pulses for relay (e.g. 1 pulse)
 
@@ -271,6 +270,60 @@ async function handleNotification(
         externalReference,
       })
       return NextResponse.json({ error: 'Payment device not found' }, { status: 422 })
+    }
+
+    // 5. REQUIREMENT: Check Device Monthly Subscription Status (R$ 29,99/month)
+    const isSubscriptionBlocked = esp32.subscriptionStatus === 'BLOCKED'
+    const isSubscriptionOverdue = esp32.paidUntil ? new Date(esp32.paidUntil) < new Date() : false
+
+    if (isSubscriptionBlocked || isSubscriptionOverdue) {
+      const blockReason = isSubscriptionBlocked
+        ? 'Dispositivo BLOQUEADO pela administração por mensalidade pendente.'
+        : 'Dispositivo com mensalidade VENCIDA (R$ 29,99/mês).'
+
+      console.warn(`[webhook RECV] ⛔ SUBSCRIPTION BLOCKED! Device ${esp32.serialNumber} is ${isSubscriptionBlocked ? 'BLOCKED' : 'OVERDUE'}. Refunding payment ${mpPaymentId}...`)
+
+      const refundResult = await refundMercadoPagoPayment({
+        paymentId: mpPaymentId,
+        accessToken,
+      })
+
+      await prisma.$transaction(async (tx) => {
+        await tx.payment.create({
+          data: {
+            clientId: client.id,
+            esp32Id: esp32.id,
+            mpPaymentId,
+            amount: new Prisma.Decimal(rawAmount),
+            status: 'refunded',
+            paymentMethod: paymentMethodName,
+            externalRef: externalReference || deviceSerial || posId || 'subscription-blocked-refund',
+          },
+        })
+
+        await tx.telemetryEvent.create({
+          data: {
+            esp32Id: esp32.id,
+            type: 'refund',
+            payload: JSON.stringify({
+              mpPaymentId,
+              status: 'refunded',
+              amount: rawAmount,
+              paymentMethod: paymentMethodName,
+              reason: blockReason,
+              refundResult,
+              idmaq: esp32.serialNumber,
+            }),
+          },
+        })
+      })
+
+      console.log(`[webhook RECV] 💸 SUBSCRIPTION REFUND EXECUTED! Payment ${mpPaymentId} refunded. Device ${esp32.serialNumber} is blocked/overdue.`)
+      return NextResponse.json({
+        ok: true,
+        message: blockReason,
+        refunded: true,
+      }, { status: 200 })
     }
 
     // 6. SYNCHRONOUS END-TO-END ACK VERIFICATION:

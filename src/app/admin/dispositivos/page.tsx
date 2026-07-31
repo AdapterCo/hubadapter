@@ -22,11 +22,34 @@ export default function DispositivosPage() {
   const load = useCallback(async () => {
     const res = await fetch('/api/admin/devices')
     const data = await res.json()
-    setDevices(data)
+    setDevices(Array.isArray(data) ? data : [])
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  async function handleAutoGenerate(count: 1 | 10 | 30) {
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ generateCount: count }),
+      })
+      if (res.ok) {
+        setShowModal(false)
+        load()
+      } else {
+        const d = await res.json()
+        setError(d.error || 'Erro ao gerar dispositivos')
+      }
+    } catch {
+      setError('Erro de comunicação ao gerar dispositivos.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
@@ -81,11 +104,21 @@ export default function DispositivosPage() {
           <h1>Dispositivos (IDMAQ)</h1>
           <p>{devices.length} total — {freeCount} livres — {claimedCount} vinculados</p>
         </div>
-        <button id="btn-add-device" className="btn btn-primary" onClick={() => setShowModal(true)}>
-          ➕ Adicionar IDMAQs
-        </button>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary" onClick={() => handleAutoGenerate(1)} disabled={saving}>
+            🎲 Gerar 1 IDMAQ
+          </button>
+          <button className="btn btn-secondary" onClick={() => handleAutoGenerate(10)} disabled={saving}>
+            🎲 Gerar 10 IDMAQs
+          </button>
+          <button className="btn btn-secondary" onClick={() => handleAutoGenerate(30)} disabled={saving}>
+            🎲 Gerar 30 IDMAQs
+          </button>
+          <button id="btn-add-device" className="btn btn-primary" onClick={() => setShowModal(true)}>
+            ➕ Adicionar Manual
+          </button>
+        </div>
       </div>
-
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         {(['all', 'free', 'claimed'] as const).map(f => (
@@ -106,7 +139,10 @@ export default function DispositivosPage() {
           <div className="empty-state">
             <div className="empty-icon">📦</div>
             <p>Nenhum dispositivo cadastrado.</p>
-            <button className="btn btn-primary" onClick={() => setShowModal(true)}>Adicionar primeiro</button>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '12px' }}>
+              <button className="btn btn-primary" onClick={() => handleAutoGenerate(10)}>🎲 Gerar 10 IDMAQs Automáticos</button>
+              <button className="btn btn-secondary" onClick={() => setShowModal(true)}>Adicionar Manualmente</button>
+            </div>
           </div>
         ) : (
           <div className="table-wrapper">
@@ -149,25 +185,42 @@ export default function DispositivosPage() {
               <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
             </div>
             {error && <div className="alert alert-error">⚠️ {error}</div>}
+
+            {/* Gerador Automático Rápido */}
+            <div style={{ background: 'var(--bg-secondary)', padding: '14px', borderRadius: '10px', marginBottom: '16px', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>
+                🎲 Gerador Automático em Lote (10 Caracteres)
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleAutoGenerate(1)} disabled={saving}>
+                  + 1 IDMAQ
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleAutoGenerate(10)} disabled={saving}>
+                  + 10 IDMAQs
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleAutoGenerate(30)} disabled={saving}>
+                  + 30 IDMAQs
+                </button>
+              </div>
+            </div>
+
             <form onSubmit={handleAdd}>
               <div className="form-group">
-                <label className="form-label">Códigos IDMAQ</label>
+                <label className="form-label">Ou digite manualmente os códigos IDMAQ</label>
                 <textarea
                   id="idmaq-input"
                   className="form-textarea"
-                  placeholder="ADP-001&#10;ADP-002&#10;ADP-003&#10;&#10;(Um por linha, ou separados por vírgula)"
+                  placeholder="ADP8K3X9L2&#10;ADP4M7N1Q5&#10;ADP9P2R6T8&#10;&#10;(Um por linha, ou separados por vírgula)"
                   value={bulkInput}
                   onChange={e => setBulkInput(e.target.value)}
-                  rows={6}
-                  required
+                  rows={4}
                   style={{ resize: 'vertical' }}
                 />
-                <span className="form-hint">Você pode adicionar vários de uma vez</span>
               </div>
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
-                <button id="btn-save-devices" type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? <span className="loading-spinner" /> : '✅'} Adicionar
+                <button id="btn-save-devices" type="submit" className="btn btn-primary" disabled={saving || !bulkInput.trim()}>
+                  {saving ? <span className="loading-spinner" /> : '✅'} Salvar Manuais
                 </button>
               </div>
             </form>

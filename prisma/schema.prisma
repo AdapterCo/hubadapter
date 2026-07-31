@@ -21,22 +21,23 @@ model Device {
 }
 
 model Client {
-  id               String         @id @default(cuid())
-  name             String
-  email            String         @unique
-  passwordHash     String
-  mpAccessToken    String?
-  mpWebhookSecret  String?
-  mpTokenValid     Boolean?
-  mpTokenCheckedAt DateTime?
-  webhookToken     String         @unique @default(cuid())
-  role             String         @default("CLIENT")
-  active           Boolean        @default(true)
-  createdAt        DateTime       @default(now())
-  devices          Device[]
-  machines         Machine[]
-  payments         Payment[]
-  webhookIssues    WebhookIssue[]
+  id                   String                @id @default(cuid())
+  name                 String
+  email                String                @unique
+  passwordHash         String
+  mpAccessToken        String?
+  mpWebhookSecret      String?
+  mpTokenValid         Boolean?
+  mpTokenCheckedAt     DateTime?
+  webhookToken         String                @unique @default(cuid())
+  role                 String                @default("CLIENT")
+  active               Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  devices              Device[]
+  machines             Machine[]
+  payments             Payment[]
+  webhookIssues        WebhookIssue[]
+  subscriptionPayments SubscriptionPayment[]
 }
 
 model Machine {
@@ -52,25 +53,30 @@ model Machine {
 }
 
 model Esp32 {
-  id               String           @id @default(cuid())
-  machineId        String
-  serialNumber     String           @unique
-  mqttTopic        String           @unique
-  online           Boolean          @default(false)
-  lastSeen         DateTime?
-  lastAckPaymentId String?
-  lastAckAt        DateTime?
-  credits          Decimal          @default(0) @db.Decimal(12, 2)
-  mpPosId          String?
-  mpPosName        String?
-  machine          Machine          @relation(fields: [machineId], references: [id], onDelete: Cascade)
-  payments         Payment[]
-  events       TelemetryEvent[]
-  createdAt    DateTime         @default(now())
+  id                   String                @id @default(cuid())
+  machineId            String
+  serialNumber         String                @unique
+  mqttTopic            String                @unique
+  online               Boolean               @default(false)
+  lastSeen             DateTime?
+  lastAckPaymentId     String?
+  lastAckAt            DateTime?
+  credits              Decimal               @default(0) @db.Decimal(12, 2)
+  mpPosId              String?
+  mpPosName            String?
+  subscriptionStatus   String                @default("ACTIVE")
+  paidUntil            DateTime?
+  monthlyFee           Decimal               @default(29.99) @db.Decimal(12, 2)
+  machine              Machine               @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  payments             Payment[]
+  events               TelemetryEvent[]
+  subscriptionPayments SubscriptionPayment[]
+  createdAt            DateTime              @default(now())
 
   @@index([machineId])
   @@index([mpPosId])
   @@index([lastSeen])
+  @@index([subscriptionStatus])
 }
 
 model Payment {
@@ -89,6 +95,22 @@ model Payment {
   @@index([clientId, createdAt])
   @@index([clientId, status, createdAt])
   @@index([esp32Id, createdAt])
+}
+
+model SubscriptionPayment {
+  id        String   @id @default(cuid())
+  clientId  String
+  esp32Id   String
+  amount    Decimal  @db.Decimal(12, 2)
+  months    Int      @default(1)
+  paidAt    DateTime @default(now())
+  periodEnd DateTime
+  notes     String?
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  esp32     Esp32    @relation(fields: [esp32Id], references: [id], onDelete: Cascade)
+
+  @@index([clientId, paidAt])
+  @@index([esp32Id, paidAt])
 }
 
 model TelemetryEvent {
