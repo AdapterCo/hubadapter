@@ -19,9 +19,9 @@ interface SidebarProps {
 const adminNav: NavItem[] = [
   { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
   { href: '/admin/clientes', icon: '👥', label: 'Clientes' },
-  { href: '/admin/dispositivos', icon: '📦', label: 'Dispositivos (IDMAQ)' },
-  { href: '/admin/pagamentos', icon: '💳', label: 'Mensalidades SaaS' },
-  { href: '/admin/telemetria', icon: '📡', label: 'Telemetria Global' },
+  { href: '/admin/dispositivos', icon: '📦', label: 'Dispositivos' },
+  { href: '/admin/pagamentos', icon: '💳', label: 'Mensalidades' },
+  { href: '/admin/telemetria', icon: '📡', label: 'Telemetria' },
 ]
 
 const clientNav: NavItem[] = [
@@ -36,33 +36,45 @@ export default function Sidebar({ role, userName }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const navItems = role === 'ADMIN' ? adminNav : clientNav
 
-  // Fechar o menu mobile automaticamente ao trocar de rota
+  // Travar o scroll do body quando a gaveta mobile estiver aberta
+  useEffect(() => {
+    if (mobileOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [mobileOpen])
+
+  // Fechar gaveta mobile ao navegar
   useEffect(() => {
     setMobileOpen(false)
   }, [pathname])
 
   return (
     <>
-      {/* BARRA SUPERIOR MOBILE (Apenas telas pequenas < 768px) */}
+      {/* HEADER FIXO MOBILE (Apenas < 768px) */}
       <header className="mobile-header">
         <div className="mobile-header-brand">
           <div className="logo-icon">📡</div>
           <div>
             <div className="logo-text">AdapterHub</div>
-            <div className="logo-sub">Sistema de Telemetria</div>
+            <div className="logo-sub">{role === 'ADMIN' ? 'Painel Admin' : 'Sistema de Telemetria'}</div>
           </div>
         </div>
 
         <button
           className="mobile-menu-btn"
-          onClick={() => setMobileOpen(!mobileOpen)}
-          aria-label="Abrir Menu"
+          onClick={() => setMobileOpen(prev => !prev)}
+          aria-label="Toggle Menu"
         >
           {mobileOpen ? '✕' : '☰'}
         </button>
       </header>
 
-      {/* OVERLAY ESCURO BACKDROP (MOBILE) */}
+      {/* OVERLAY ESCURO BACKDROP */}
       {mobileOpen && (
         <div
           className="mobile-backdrop"
@@ -70,15 +82,14 @@ export default function Sidebar({ role, userName }: SidebarProps) {
         />
       )}
 
-      {/* SIDEBAR PRINCIPAL / DRAWER MOBILE */}
+      {/* GAVETA LATERAL SLIDE-IN (DESKTOP E MOBILE) */}
       <aside className={`sidebar ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-icon">📡</div>
           <div>
             <div className="logo-text">AdapterHub</div>
-            <div className="logo-sub">Sistema de Telemetria</div>
+            <div className="logo-sub">{role === 'ADMIN' ? 'Painel Admin' : 'Sistema de Telemetria'}</div>
           </div>
-          {/* Botão para fechar gaveta no mobile */}
           <button
             className="mobile-close-btn"
             onClick={() => setMobileOpen(false)}
@@ -93,7 +104,7 @@ export default function Sidebar({ role, userName }: SidebarProps) {
           </span>
 
           {navItems.map(item => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+            const isActive = pathname === item.href || (item.href !== '/painel' && item.href !== '/admin/dashboard' && pathname.startsWith(item.href))
             return (
               <Link
                 key={item.href}
@@ -101,7 +112,7 @@ export default function Sidebar({ role, userName }: SidebarProps) {
                 className={`nav-item ${isActive ? 'active' : ''}`}
                 onClick={() => setMobileOpen(false)}
               >
-                <span style={{ fontSize: '18px' }}>{item.icon}</span>
+                <span className="nav-icon">{item.icon}</span>
                 <span>{item.label}</span>
               </Link>
             )
@@ -121,16 +132,8 @@ export default function Sidebar({ role, userName }: SidebarProps) {
             </div>
             <button
               onClick={() => signOut({ callbackUrl: '/login' })}
-              title="Sair"
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'var(--text-muted)',
-                fontSize: '18px',
-                padding: '6px',
-                flexShrink: 0,
-              }}
+              title="Sair da Conta"
+              className="logout-btn"
             >
               🚪
             </button>
@@ -138,7 +141,7 @@ export default function Sidebar({ role, userName }: SidebarProps) {
         </div>
       </aside>
 
-      {/* BARRA DE NAVEGAÇÃO INFERIOR RÁPIDA (BOTTOM NAV PARA DISPOSITIVOS MÓVEIS) */}
+      {/* BARRA FIXA INFERIOR (BOTTOM NAV BAR PARACELLULAR) */}
       <nav className="mobile-bottom-nav">
         {navItems.slice(0, 4).map(item => {
           const isActive = pathname === item.href || (item.href !== '/painel' && item.href !== '/admin/dashboard' && pathname.startsWith(item.href))
@@ -153,6 +156,13 @@ export default function Sidebar({ role, userName }: SidebarProps) {
             </Link>
           )
         })}
+        <button
+          className="mobile-bottom-nav-item"
+          onClick={() => setMobileOpen(prev => !prev)}
+        >
+          <span className="icon">☰</span>
+          <span className="label">Menu</span>
+        </button>
       </nav>
     </>
   )
